@@ -1,0 +1,21 @@
+{
+  "Server": "MACHINE\\INSTANCE",
+  "Database": "MyDb",
+  "VersionFolder": "D:\\path\\to\\versioned\\scripts",
+  "PrepatchFile": "",
+  "DefaultSchema": "dbo",
+  "VersionScheme": {
+    "FilePattern": "^1\\.0\\.0\\.(\\d+)\\.sql$",
+    "FileNameFormat": "1.0.0.{0}.sql",
+    "LabelFormat": "1.0.0.{0}"
+  },
+  "Connection": {
+    "Authentication": "Windows",
+    "UserId": "",
+    "Password": "",
+    "Encrypt": false,
+    "TrustServerCertificate": true,
+    "ConnectTimeoutSeconds": 15,
+    "CommandTimeoutSeconds": 600
+  }
+}
