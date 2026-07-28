@@ -6,6 +6,8 @@ SchemaScope runs a folder of numbered `.sql` migration scripts in order and, uni
 
 Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/) using the [Catppuccin Mocha](https://github.com/catppuccin/catppuccin) palette, and powered by [Microsoft.SqlServer.TransactSql.ScriptDom](https://learn.microsoft.com/en-us/dotnet/api/microsoft.sqlserver.transactsql.scriptdom) for parsing and canonical regeneration.
 
+**[See SchemaScope in action](https://project.kishormarasini.com.au/schemascope)**: an annotated walkthrough of detect, heal, verify, backup, and clone.
+
 ---
 
 ## Features
