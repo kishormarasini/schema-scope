@@ -45,6 +45,34 @@ public sealed record AuditTotals(
     int NoDdl,
     int WithParseErrors);
 
+public sealed record JournalEntry(
+    string ScriptName,
+    string? Version,
+    DateTime? AppliedAtUtc,
+    bool Success);
+
+public sealed record JournalFinding(
+    string ScriptName,
+    string? Label,
+    string Detail);
+
+public sealed record JournalAudit(
+    string Provider,
+    string Table,
+    int Entries,
+    IReadOnlyList<JournalFinding> JournaledButNotApplied,
+    IReadOnlyList<JournalFinding> AppliedButNotJournaled,
+    IReadOnlyList<JournalFinding> UnmatchedJournalEntries,
+    IReadOnlyList<JournalFinding> FailedJournalEntries)
+{
+    public bool HasLies => JournaledButNotApplied.Count > 0;
+    public bool IsClean =>
+        JournaledButNotApplied.Count == 0
+        && AppliedButNotJournaled.Count == 0
+        && UnmatchedJournalEntries.Count == 0
+        && FailedJournalEntries.Count == 0;
+}
+
 public sealed record AuditReport(
     string Tool,
     string ToolVersion,
@@ -62,22 +90,35 @@ public sealed record AuditReport(
     AuditTotals Totals,
     IReadOnlyList<AuditScriptResult> Pending,
     IReadOnlyList<AuditScriptResult> Drift,
-    IReadOnlyList<AuditScriptResult> Scripts)
+    IReadOnlyList<AuditScriptResult> Scripts,
+    JournalAudit? Journal = null)
 {
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 
-    public int ToExitCode(bool strict) => Verdict switch
+    public int ToExitCode(bool strict)
     {
-        AuditVerdict.AtHead => strict && Drift.Count > 0 ? 1 : 0,
-        _ => 1
-    };
+        if (Journal is { HasLies: true })
+        {
+            return 1;
+        }
+        if (strict && Journal is { IsClean: false })
+        {
+            return 1;
+        }
+        return Verdict switch
+        {
+            AuditVerdict.AtHead => strict && Drift.Count > 0 ? 1 : 0,
+            _ => 1
+        };
+    }
 }
 
 public sealed record SingleVerifyReport(

@@ -37,6 +37,7 @@ public sealed class CliOptions
     public OutputFormat Output { get; set; } = OutputFormat.Text;
     public string? ReportPath { get; set; }
     public bool Strict { get; set; }
+    public string? Journal { get; set; }
 
     public string? SourceDatabase { get; set; }
     public string? TargetDatabase { get; set; }
@@ -120,6 +121,14 @@ public sealed class CliOptions
                     break;
                 case "--strict":
                     options.Strict = true;
+                    break;
+                case "--journal":
+                    var journal = ReadValue(args, ref i, arg).ToLowerInvariant();
+                    if (journal is not ("dbup" or "flyway" or "auto"))
+                    {
+                        throw new ArgumentException($"Unknown journal provider '{journal}'. Use dbup, flyway, or auto.");
+                    }
+                    options.Journal = journal;
                     break;
                 case "--verify":
                     options.SetCommand(CliCommand.Verify);

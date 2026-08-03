@@ -406,7 +406,7 @@ public sealed class ToolkitActions
         });
     }
 
-    public int RunAudit(string database, int from, int to, bool json, string? reportPath, bool strict)
+    public int RunAudit(string database, int from, int to, bool json, string? reportPath, bool strict, string? journal = null)
     {
         using var logger = RunLogger.Create(database);
         logger.LogOnly($"Audit started: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -435,6 +435,32 @@ public sealed class ToolkitActions
                 ? new SchemaAuditor(session, _locator, _defaultSchema)
                     .Run(from, to, (script, entry) => LogAuditEntry(logger, script, entry))
                 : RunAuditWithProgress(session, logger, from, to);
+
+            if (report is not null && journal is not null)
+            {
+                var provider = journal.Equals("auto", StringComparison.OrdinalIgnoreCase)
+                    ? JournalReader.DetectProvider(session)
+                    : journal.ToLowerInvariant();
+
+                if (provider is null)
+                {
+                    Console.Error.WriteLine(
+                        $"No known journal table found in {database} (looked for {JournalReader.DbUpTable} and {JournalReader.FlywayTable}).");
+                    return 2;
+                }
+
+                var read = JournalReader.Read(session, provider);
+                if (read is null)
+                {
+                    Console.Error.WriteLine(
+                        $"Journal table for provider '{provider}' not found in {database}.");
+                    return 2;
+                }
+
+                var (table, entries) = read.Value;
+                report = report with { Journal = JournalReader.CrossCheck(provider, table, entries, report) };
+                logger.LogOnly($"Journal: {provider} ({table}), {entries.Count} entries");
+            }
         }
 
         if (report is null)
@@ -468,6 +494,7 @@ public sealed class ToolkitActions
             AnsiConsole.WriteLine();
             RenderAuditSummary(report);
             RenderAuditMismatchDetails(report);
+            RenderJournalAudit(report.Journal);
             AnsiConsole.WriteLine();
             RenderAuditVerdict(logger, report);
             if (!string.IsNullOrWhiteSpace(reportPath))
@@ -636,6 +663,54 @@ public sealed class ToolkitActions
         }
 
         AnsiConsole.Write(table);
+    }
+
+    private static void RenderJournalAudit(JournalAudit? journal)
+    {
+        if (journal is null)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[{Theme.Subtitle}]Journal cross-check[/]  [{Theme.Muted}]{Theme.Escape(journal.Provider)} · {Theme.Escape(journal.Table)} · {journal.Entries} entries[/]");
+
+        if (journal.IsClean)
+        {
+            AnsiConsole.MarkupLine($"  [{Theme.Success}]✓[/] The journal agrees with the schema evidence.");
+            return;
+        }
+
+        RenderFindings(journal.JournaledButNotApplied, "JOURNAL LIES", Theme.PillMissing,
+            "recorded as applied, but the schema disagrees");
+        RenderFindings(journal.FailedJournalEntries, "FAILED", Theme.PillDiffers,
+            "recorded as failed migrations");
+        RenderFindings(journal.AppliedButNotJournaled, "UNTRACKED", Theme.PillDiffers,
+            "present in the schema, missing from the journal");
+        RenderFindings(journal.UnmatchedJournalEntries, "ORPHANED", Theme.PillNeutral,
+            "journal entries with no matching local script");
+
+        static void RenderFindings(IReadOnlyList<JournalFinding> findings, string pillText, string pillStyle, string caption)
+        {
+            if (findings.Count == 0)
+            {
+                return;
+            }
+
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"  [{pillStyle}] {pillText} [/] [{Theme.Muted}]{findings.Count} — {caption}[/]");
+            foreach (var f in findings.Take(10))
+            {
+                var label = f.Label is null ? string.Empty : $"[{Theme.Accent}]{Theme.Escape(f.Label)}[/]  ";
+                AnsiConsole.MarkupLine($"    {label}[white]{Theme.Escape(f.ScriptName)}[/]");
+                AnsiConsole.MarkupLine($"      [{Theme.Muted}]{Theme.Escape(f.Detail)}[/]");
+            }
+            if (findings.Count > 10)
+            {
+                AnsiConsole.MarkupLine($"    [{Theme.Muted}]... {findings.Count - 10} more (see JSON report)[/]");
+            }
+        }
     }
 
     private void RenderAuditVerdict(RunLogger logger, AuditReport report)

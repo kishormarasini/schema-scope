@@ -27,6 +27,7 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 | **Clone** | Backup source → Restore as target, in one step. |
 | **Setup wizard** | First run opens a guided setup: server, authentication (with a live connection test), database picker straight from `sys.databases`, script-folder validation with a live count of matching files, and naming-scheme presets. Rerun it any time from the **Settings** menu or with `--setup`. |
 | **Audit** | One command, the whole truth: `--audit` probes every script in range and emits a full drift report — applied / partial / missing per script, object-level mismatch detail, drift vs pending split, and a machine-readable JSON payload (`--output json`, `--report file.json`) for pipelines and dashboards. |
+| **Journal cross-check** | Already on DbUp or Flyway? `--journal auto` reads their history table (`SchemaVersions` / `flyway_schema_history`) and checks every claim against the live schema. Catches **journal lies** (recorded as applied, objects absent), **untracked scripts** (applied by hand, never journaled), **orphaned entries**, and failed Flyway migrations. Zero risk, read-only — drop it into CI next to the tools you already run. |
 
 **Small quality-of-life touches**: a grouped, searchable menu (arrow keys or type to filter); typing `back`, `menu`, or `cancel` at any prompt returns to the main menu; pre-flight input validation; retry-with-edits loops on operation failures; completion panels with `OSC 52` clipboard auto-copy and `OSC 8` folder hyperlinks; per-user Debug config for F5-without-typing.
 
@@ -104,6 +105,10 @@ schemascope --detect --database MyDb --start-from 1
 # Exit 0 = at head, 1 = behind (add --strict to also fail on drift).
 schemascope --audit --database MyDb --output json --report drift-report.json
 
+# Audit a database managed by DbUp or Flyway: cross-check their journal
+# against the actual schema. Exit 1 if the journal claims anything that isn't true.
+schemascope --audit --database MyDb --journal auto
+
 # Backup / Restore / Clone (no scripts folder needed).
 schemascope --backup  --source MyDb --backup-path ./backups/MyDb.bak
 schemascope --restore --target MyDb_Restored --backup-path ./backups/MyDb.bak
@@ -117,7 +122,8 @@ schemascope --clone   --source MyDb --target MyDb_Copy
 | `--audit` | Probe **every** script in range and report drift + pending with object-level detail. Exits `0` at head, `1` behind. |
 | `-o`, `--output <fmt>` | Output for `--verify` / `--detect` / `--audit`: `text` (default) or `json`. JSON goes to stdout, diagnostics to stderr — pipe-safe. |
 | `--report <path>` | Also write the JSON report to a file (works in text mode too). |
-| `--strict` | With `--audit`: exit `1` when drift exists, even at head. |
+| `--strict` | With `--audit`: exit `1` when drift exists, even at head. Also fails on untracked/orphaned journal findings. |
+| `--journal <p>` | With `--audit`: cross-check a migration journal — `dbup`, `flyway`, or `auto` (detects whichever table exists). Journal lies always exit `1`. |
 | `--backup` | Back up a database. Requires `--source` and `--backup-path`. |
 | `--restore` | Restore a backup. Requires `--target` and `--backup-path`; optional `--data-dir` / `--log-dir`. |
 | `--clone` | Clone a database. Requires `--source` and `--target`; optional `--backup-path`. |
@@ -343,7 +349,7 @@ SchemaScope/
 - [x] Session-only masked password entry (never written to disk)
 - [x] `--audit`: full-range drift report with object-level detail
 - [x] `--output json` / `--report` machine-readable output for verify, detect, and audit
-- [ ] Journal readers: audit databases managed by DbUp / Flyway
+- [x] Journal cross-check: audit databases managed by DbUp / Flyway (`--journal auto`)
 - [ ] GitHub Action + container image
 - [ ] Opt-in history table (tracks data-only scripts; verification stays evidence-based)
 

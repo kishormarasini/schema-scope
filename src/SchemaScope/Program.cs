@@ -272,7 +272,7 @@ switch (options.Command)
         return actions.VerifyForCi(databaseName, options.VerifyTarget, jsonOutput, options.ReportPath);
 
     case CliCommand.Audit:
-        return actions.RunAudit(databaseName, options.StartFrom, options.EndAt, jsonOutput, options.ReportPath, options.Strict);
+        return actions.RunAudit(databaseName, options.StartFrom, options.EndAt, jsonOutput, options.ReportPath, options.Strict, options.Journal);
 
     case CliCommand.Detect:
         if (jsonOutput || !string.IsNullOrWhiteSpace(options.ReportPath))
@@ -329,7 +329,7 @@ static void PrintHelp()
     AnsiConsole.WriteLine("  schemascope --verify <n> --database <name> [--version-folder <path>] [--output json]");
     AnsiConsole.WriteLine("  schemascope --detect --database <name> [--start-from <n>] [--output json]");
     AnsiConsole.WriteLine("  schemascope --audit  --database <name> [--start-from <n>] [--end-at <n>]");
-    AnsiConsole.WriteLine("              [--output json] [--report <file.json>] [--strict]");
+    AnsiConsole.WriteLine("              [--output json] [--report <file.json>] [--strict] [--journal <provider>]");
     AnsiConsole.WriteLine("  schemascope --backup  --source <db> --backup-path <file.bak>");
     AnsiConsole.WriteLine("  schemascope --restore --target <db> --backup-path <file.bak> [--data-dir <d>] [--log-dir <d>]");
     AnsiConsole.WriteLine("  schemascope --clone   --source <db> --target <db> [--backup-path <file.bak>]");
@@ -352,6 +352,7 @@ static void PrintHelp()
     AnsiConsole.MarkupLine("  -o, --output <fmt>     Output format for verify/detect/audit: text (default) or json.");
     AnsiConsole.MarkupLine("      --report <path>    Also write the JSON report to a file.");
     AnsiConsole.MarkupLine("      --strict           Audit only: exit 1 when drift exists, even at head.");
+    AnsiConsole.MarkupLine("      --journal <p>      Audit only: cross-check a migration journal (dbup, flyway, or auto).");
     AnsiConsole.MarkupLine("      --backup           Back up a database. Needs --source and --backup-path.");
     AnsiConsole.MarkupLine("      --restore          Restore a backup. Needs --target and --backup-path.");
     AnsiConsole.MarkupLine("      --clone            Clone a database. Needs --source and --target.");
