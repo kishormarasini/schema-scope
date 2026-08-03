@@ -53,6 +53,12 @@ if (options.ShowHelp)
 
 var config = SchemaScopeConfig.Load(options.ConfigPath);
 
+if (!string.IsNullOrWhiteSpace(options.UserId))
+{
+    config.Connection.Authentication = AuthenticationMode.SqlPassword;
+    config.Connection.UserId = options.UserId;
+}
+
 var server        = FirstNonEmpty(options.Server, config.Server);
 var databaseName  = FirstNonEmpty(options.DatabaseName, config.Database);
 var versionFolder = FirstNonEmpty(options.VersionFolder, config.VersionFolder);
@@ -337,6 +343,7 @@ static void PrintHelp()
     AnsiConsole.MarkupLine($"[{Theme.Muted}]Options:[/]");
     AnsiConsole.MarkupLine("  -d, --database         Target DB. Passing this triggers non-interactive mode.");
     AnsiConsole.MarkupLine("  -s, --server           SQL instance (e.g. MACHINE\\INSTANCE or .).");
+    AnsiConsole.MarkupLine("  -u, --user-id          SQL login user. Implies SQL authentication; password via SCHEMASCOPE_PASSWORD.");
     AnsiConsole.MarkupLine("  -f, --version-folder   Folder containing the versioned .sql scripts.");
     AnsiConsole.MarkupLine("  -c, --config           Path to a config file (defaults to the per-user config).");
     AnsiConsole.MarkupLine("      --prepatch-file    Optional idempotent pre-step SQL file.");

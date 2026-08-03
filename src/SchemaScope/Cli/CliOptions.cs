@@ -23,6 +23,7 @@ public sealed class CliOptions
 
     public string? DatabaseName { get; set; }
     public string? Server { get; set; }
+    public string? UserId { get; set; }
     public string? VersionFolder { get; set; }
     public string? PrepatchFile { get; set; }
     public string? ConfigPath { get; set; }
@@ -66,6 +67,10 @@ public sealed class CliOptions
                 case "--server":
                 case "-s":
                     options.Server = ReadValue(args, ref i, arg);
+                    break;
+                case "--user-id":
+                case "-u":
+                    options.UserId = ReadValue(args, ref i, arg);
                     break;
                 case "--version-folder":
                 case "-f":

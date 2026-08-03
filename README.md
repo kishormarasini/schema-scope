@@ -77,6 +77,7 @@ schemascope --database MyDb --server MACHINE\INSTANCE --version-folder D:\migrat
 |---|---|
 | `-d`, `--database` | Target database. Triggers non-interactive mode. |
 | `-s`, `--server` | SQL instance (e.g. `MACHINE\INSTANCE` or `.`). |
+| `-u`, `--user-id` | SQL login user; implies SQL authentication. Password comes from `SCHEMASCOPE_PASSWORD`. No config file needed. |
 | `-f`, `--version-folder` | Folder containing the versioned `.sql` scripts. |
 | `-c`, `--config` | Path to a config file. Defaults to the per-user config (see below). |
 | `--prepatch-file` | Optional idempotent pre-step SQL. |
@@ -160,6 +161,36 @@ Only one operation can run per invocation. The `--verify` and `--audit` exit cod
 ```
 
 Unlike journal-based tools (DbUp, Flyway), the audit never trusts a history table — every claim is verified against the live schema, so a hand-edited database or half-failed script can't hide.
+
+### GitHub Action
+
+The repo doubles as a composite action. It builds the CLI, runs the audit, writes a rich job summary (verdict, totals, pending scripts, journal findings), and exposes outputs:
+
+```yaml
+- uses: kishormarasini/schema-scope@main
+  env:
+    SCHEMASCOPE_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  with:
+    server: sql.internal,1433
+    database: MyDb
+    version-folder: ./migrations
+    user-id: ci_readonly
+    journal: auto          # optional: cross-check DbUp/Flyway
+    strict: "false"
+```
+
+Outputs: `verdict`, `current-version`, `pending-count`, `report-path`. The job fails when the database is behind head or the journal lies — a read-only drift gate with zero deploy risk.
+
+### Docker
+
+```bash
+docker run --rm -e SCHEMASCOPE_PASSWORD -v ./migrations:/migrations \
+  ghcr.io/kishormarasini/schemascope:latest \
+  --audit --server host.docker.internal --database MyDb \
+  --version-folder /migrations --user-id sa --output json
+```
+
+Images are published to GHCR on every release tag.
 
 ### Script convention
 By default, files are named `1.0.0.N.sql` where `N` is a positive integer (`1.0.0.1.sql`, `1.0.0.2.sql`, ...). The naming scheme is **not hard-coded**: it's defined by `VersionScheme` in the config file, so a `V12__add_users.sql`-style convention works just as well (see [Configuration](#configuration)). Scripts may reference the target database via the `[DatabaseName]` placeholder, which SchemaScope substitutes textually before execution.
@@ -350,7 +381,7 @@ SchemaScope/
 - [x] `--audit`: full-range drift report with object-level detail
 - [x] `--output json` / `--report` machine-readable output for verify, detect, and audit
 - [x] Journal cross-check: audit databases managed by DbUp / Flyway (`--journal auto`)
-- [ ] GitHub Action + container image
+- [x] GitHub Action (composite, with job summary + outputs) and GHCR container image
 - [ ] Opt-in history table (tracks data-only scripts; verification stays evidence-based)
 
 ---

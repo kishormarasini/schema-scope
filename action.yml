@@ -1,0 +1,150 @@
+name: SchemaScope Audit
+description: >-
+  Evidence-based SQL Server drift audit. Verifies every migration script
+  against the live schema (never trusts a journal) and optionally cross-checks
+  a DbUp or Flyway history table. Fails the job when the database is behind
+  head or the journal lies.
+author: Kishor Marasini
+branding:
+  icon: database
+  color: blue
+
+inputs:
+  server:
+    description: SQL Server instance (host or host,port)
+    required: true
+  database:
+    description: Database to audit
+    required: true
+  version-folder:
+    description: Folder containing the versioned .sql migration scripts
+    required: true
+  user-id:
+    description: SQL login user. Provide the password via the SCHEMASCOPE_PASSWORD env var.
+    required: false
+    default: ""
+  start-from:
+    description: Lowest version to scan (0 = no bound)
+    required: false
+    default: "0"
+  end-at:
+    description: Highest version to scan (0 = no bound)
+    required: false
+    default: "0"
+  strict:
+    description: Fail when drift exists even at head, and on untracked/orphaned journal findings
+    required: false
+    default: "false"
+  journal:
+    description: "Cross-check a migration journal: dbup, flyway, or auto. Empty disables."
+    required: false
+    default: ""
+  report-path:
+    description: Where to write the JSON report
+    required: false
+    default: schemascope-report.json
+
+outputs:
+  verdict:
+    description: Audit verdict (atHead, behindHead, notInitialised, noAppliedVersionInRange)
+    value: ${{ steps.audit.outputs.verdict }}
+  current-version:
+    description: Label of the highest fully-applied version
+    value: ${{ steps.audit.outputs.current-version }}
+  pending-count:
+    description: Number of unapplied scripts after the current version
+    value: ${{ steps.audit.outputs.pending-count }}
+  report-path:
+    description: Path of the JSON report file
+    value: ${{ inputs.report-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        global-json-file: ${{ github.action_path }}/global.json
+
+    - name: Build SchemaScope
+      shell: bash
+      run: dotnet publish "$GITHUB_ACTION_PATH/src/SchemaScope" -c Release -o "$RUNNER_TEMP/schemascope" --nologo -v q
+
+    - name: Audit
+      id: audit
+      shell: bash
+      run: |
+        args=(--audit
+          --server "${{ inputs.server }}"
+          --database "${{ inputs.database }}"
+          --version-folder "${{ inputs.version-folder }}"
+          --start-from "${{ inputs.start-from }}"
+          --end-at "${{ inputs.end-at }}"
+          --output json
+          --report "${{ inputs.report-path }}"
+          --config "$RUNNER_TEMP/schemascope/ci-config.json")
+        [ -n "${{ inputs.user-id }}" ] && args+=(--user-id "${{ inputs.user-id }}")
+        [ "${{ inputs.strict }}" = "true" ] && args+=(--strict)
+        [ -n "${{ inputs.journal }}" ] && args+=(--journal "${{ inputs.journal }}")
+
+        set +e
+        "$RUNNER_TEMP/schemascope/schemascope" "${args[@]}" > /dev/null
+        code=$?
+        set -e
+
+        if [ -f "${{ inputs.report-path }}" ]; then
+          {
+            echo "verdict=$(jq -r '.verdict' "${{ inputs.report-path }}")"
+            echo "current-version=$(jq -r '.currentVersionLabel // "none"' "${{ inputs.report-path }}")"
+            echo "pending-count=$(jq -r '.pending | length' "${{ inputs.report-path }}")"
+          } >> "$GITHUB_OUTPUT"
+        fi
+        exit $code
+
+    - name: Job summary
+      if: always()
+      shell: bash
+      run: |
+        r="${{ inputs.report-path }}"
+        [ -f "$r" ] || exit 0
+        {
+          echo "## SchemaScope audit — \`${{ inputs.database }}\`"
+          echo ""
+          verdict=$(jq -r '.verdict' "$r")
+          case "$verdict" in
+            atHead) icon="✅" ;;
+            behindHead) icon="🟠" ;;
+            *) icon="🔴" ;;
+          esac
+          echo "$icon **Verdict:** \`$verdict\` · current \`$(jq -r '.currentVersionLabel // "none"' "$r")\` · head \`$(jq -r '.head' "$r")\`"
+          echo ""
+          echo "| Applied | Partial | Missing | No DDL |"
+          echo "|---|---|---|---|"
+          echo "| $(jq -r '.totals.applied' "$r") | $(jq -r '.totals.partial' "$r") | $(jq -r '.totals.missing' "$r") | $(jq -r '.totals.noDdl' "$r") |"
+          pending=$(jq -r '.pending | length' "$r")
+          if [ "$pending" -gt 0 ]; then
+            echo ""
+            echo "### Pending scripts"
+            echo "| Version | Status | Objects |"
+            echo "|---|---|---|"
+            jq -r '.pending[] | "| \(.label) | \(.status) | \(.objectsPresent)/\(.objectsTotal) |"' "$r"
+          fi
+          drift=$(jq -r '.drift | length' "$r")
+          if [ "$drift" -gt 0 ]; then
+            echo ""
+            echo "<sub>$drift older script(s) show drift (objects dropped or renamed by later migrations).</sub>"
+          fi
+          if jq -e '.journal' "$r" > /dev/null; then
+            echo ""
+            echo "### Journal cross-check ($(jq -r '.journal.provider' "$r"))"
+            lies=$(jq -r '.journal.journaledButNotApplied | length' "$r")
+            if [ "$lies" -gt 0 ]; then
+              echo "❌ **$lies journal entr$([ "$lies" = 1 ] && echo y || echo ies) recorded as applied but absent from the schema:**"
+              jq -r '.journal.journaledButNotApplied[] | "- `\(.scriptName)` — \(.detail)"' "$r"
+            else
+              echo "✅ The journal agrees with the schema evidence."
+            fi
+            untracked=$(jq -r '.journal.appliedButNotJournaled | length' "$r")
+            [ "$untracked" -gt 0 ] && echo "" && echo "<sub>$untracked applied script(s) missing from the journal; $(jq -r '.journal.unmatchedJournalEntries | length' "$r") orphaned journal entr(ies).</sub>"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
