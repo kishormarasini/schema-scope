@@ -19,6 +19,8 @@ public sealed class VersionScriptLocator
 
     public bool FolderExists => _folder?.Exists ?? false;
 
+    public VersionScheme Scheme => _scheme;
+
     public string FolderPath => _folder?.FullName ?? string.Empty;
 
     public string Label(int number) => _scheme.Label(number);

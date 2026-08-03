@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using SchemaScope.Auditing;
 using SchemaScope.Parsing;
 using SchemaScope.Sql;
 using SchemaScope.TestDb;
@@ -389,140 +390,175 @@ public sealed class ToolkitActions
     {
         RunWithSession(database, (session, logger, _) =>
         {
-            var from = startFrom <= 0 ? 0 : startFrom;
-            var scripts = _locator.GetInRange(from, 0);
-            if (scripts.Count == 0)
+            var report = RunAuditWithProgress(session, logger, startFrom, 0);
+            if (report is null)
             {
-                logger.Warn(from > 0
-                    ? $"No version scripts found at or above {_locator.Label(from)}."
+                logger.Warn(startFrom > 0
+                    ? $"No version scripts found at or above {_locator.Label(startFrom)}."
                     : $"No version scripts found in {_locator.FolderPath}.");
                 return;
             }
 
-            logger.Info($"Probing {scripts.Count} version scripts from {scripts[0].Label} to {scripts[^1].Label} ...");
             AnsiConsole.WriteLine();
-
-            var extractor = new DdlExtractor();
-            var verifier = new VersionVerifier(session, _defaultSchema);
-
-            var results = new List<ProbeEntry>(scripts.Count);
-            int highestApplied = 0;
-
-            AnsiConsole.Progress()
-                .AutoClear(false)
-                .HideCompleted(false)
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new ProgressBarColumn { CompletedStyle = Theme.HighlightStyle, FinishedStyle = Theme.HighlightStyle },
-                    new PercentageColumn(),
-                    new SpinnerColumn(Spinner.Known.Dots))
-                .Start(ctx =>
-                {
-                    var task = ctx.AddTask($"[{Theme.Info}]Probing[/]", maxValue: scripts.Count);
-                    foreach (var script in scripts)
-                    {
-                        var entry = Probe(logger, script, extractor, verifier);
-                        results.Add(entry);
-                        if (entry.Status == ProbeStatus.Applied || entry.Status == ProbeStatus.NoDdl)
-                        {
-                            highestApplied = script.Number;
-                        }
-                        task.Description = $"[{Theme.Info}]Probing[/]  [{Theme.Muted}]{script.Label}[/]";
-                        task.Increment(1);
-                    }
-                });
-
+            RenderAuditSummary(report);
             AnsiConsole.WriteLine();
-            RenderProbeReport(logger, results, highestApplied, scripts[^1].Number, from);
+            RenderAuditVerdict(logger, report);
         });
     }
 
-    private static ProbeEntry Probe(RunLogger logger, VersionScript script, DdlExtractor extractor, VersionVerifier verifier)
+    public int RunAudit(string database, int from, int to, bool json, string? reportPath, bool strict)
     {
+        using var logger = RunLogger.Create(database);
+        logger.LogOnly($"Audit started: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+
+        if (!json)
+        {
+            Banner.ConnectionInfo(_factory.Server, database, _locator.FolderPath, logger.LogFilePath);
+        }
+
+        SqlSession session;
         try
         {
-            var raw = File.ReadAllText(script.File.FullName);
-            var extraction = extractor.Extract(raw);
-            var parseErrors = extraction.ParseErrors.Count;
-            foreach (var parseError in extraction.ParseErrors)
-            {
-                logger.LogOnly($"  {script.Label} parse: {parseError}");
-            }
-
-            if (extraction.Objects.Count == 0)
-            {
-                logger.LogOnly($"  {script.Label} no-ddl");
-                return new ProbeEntry(script, ProbeStatus.NoDdl, 0, 0, parseErrors);
-            }
-
-            var report = verifier.Verify(script.Number, extraction.Objects, extraction.ParseErrors);
-            var present = report.OkCount;
-            var total = report.Results.Count;
-            var status = report.Verdict switch
-            {
-                VerificationVerdict.FullyApplied => ProbeStatus.Applied,
-                VerificationVerdict.NotApplied   => ProbeStatus.Missing,
-                VerificationVerdict.Partial      => ProbeStatus.Partial,
-                _                                => ProbeStatus.NoDdl
-            };
-            logger.LogOnly($"  {script.Label} {status.ToString().ToLowerInvariant()} {present}/{total}");
-            return new ProbeEntry(script, status, present, total, parseErrors);
+            session = SqlSession.Open(_factory, database);
         }
-        catch (IOException ex)
+        catch (Exception ex)
         {
-            logger.LogOnly($"  {script.Label} read-fail: {ex.Message}");
-            return new ProbeEntry(script, ProbeStatus.Missing, 0, 0, 0);
+            Console.Error.WriteLine($"Cannot connect to {_factory.Server} / {database}: {ex.Message}");
+            logger.LogOnly($"Cannot connect: {ex.Message}");
+            return 3;
+        }
+
+        AuditReport? report;
+        using (session)
+        {
+            report = json
+                ? new SchemaAuditor(session, _locator, _defaultSchema)
+                    .Run(from, to, (script, entry) => LogAuditEntry(logger, script, entry))
+                : RunAuditWithProgress(session, logger, from, to);
+        }
+
+        if (report is null)
+        {
+            Console.Error.WriteLine(from > 0
+                ? $"No version scripts found at or above {_locator.Label(from)}."
+                : $"No version scripts found in {_locator.FolderPath}.");
+            return 2;
+        }
+
+        if (!string.IsNullOrWhiteSpace(reportPath))
+        {
+            try
+            {
+                File.WriteAllText(reportPath, report.ToJson());
+                logger.LogOnly($"Report written: {reportPath}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"Could not write report to {reportPath}: {ex.Message}");
+                return 2;
+            }
+        }
+
+        if (json)
+        {
+            Console.WriteLine(report.ToJson());
+        }
+        else
+        {
+            AnsiConsole.WriteLine();
+            RenderAuditSummary(report);
+            RenderAuditMismatchDetails(report);
+            AnsiConsole.WriteLine();
+            RenderAuditVerdict(logger, report);
+            if (!string.IsNullOrWhiteSpace(reportPath))
+            {
+                AnsiConsole.MarkupLine($"[{Theme.Muted}]JSON report: {Theme.Escape(reportPath!)}[/]");
+            }
+            logger.Blank();
+            logger.Info($"Done. Full log: {logger.LogFilePath}");
+        }
+
+        return report.ToExitCode(strict);
+    }
+
+    private AuditReport? RunAuditWithProgress(SqlSession session, RunLogger logger, int startFrom, int endAt)
+    {
+        var from = startFrom <= 0 ? 0 : startFrom;
+        var scripts = _locator.GetInRange(from, endAt);
+        if (scripts.Count == 0)
+        {
+            return null;
+        }
+
+        logger.Info($"Probing {scripts.Count} version scripts from {scripts[0].Label} to {scripts[^1].Label} ...");
+        AnsiConsole.WriteLine();
+
+        AuditReport? report = null;
+        AnsiConsole.Progress()
+            .AutoClear(false)
+            .HideCompleted(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn { CompletedStyle = Theme.HighlightStyle, FinishedStyle = Theme.HighlightStyle },
+                new PercentageColumn(),
+                new SpinnerColumn(Spinner.Known.Dots))
+            .Start(ctx =>
+            {
+                var task = ctx.AddTask($"[{Theme.Info}]Probing[/]", maxValue: scripts.Count);
+                report = new SchemaAuditor(session, _locator, _defaultSchema).Run(from, endAt, (script, entry) =>
+                {
+                    LogAuditEntry(logger, script, entry);
+                    task.Description = $"[{Theme.Info}]Probing[/]  [{Theme.Muted}]{script.Label}[/]";
+                    task.Increment(1);
+                });
+            });
+
+        return report;
+    }
+
+    private static void LogAuditEntry(RunLogger logger, VersionScript script, AuditScriptResult entry)
+    {
+        logger.LogOnly(entry.Status == AuditScriptStatus.NoDdl
+            ? $"  {script.Label} no-ddl"
+            : $"  {script.Label} {entry.Status.ToString().ToLowerInvariant()} {entry.ObjectsPresent}/{entry.ObjectsTotal}");
+        foreach (var mismatch in entry.Mismatches)
+        {
+            logger.LogOnly($"    {mismatch.Status.ToLowerInvariant()} {mismatch.Kind} {mismatch.Name}: {mismatch.Detail}");
         }
     }
 
-    private void RenderProbeReport(RunLogger logger, List<ProbeEntry> results, int highestApplied, int head, int startFrom)
+    private static void RenderAuditSummary(AuditReport report)
     {
-        var applied = results.Count(r => r.Status == ProbeStatus.Applied || r.Status == ProbeStatus.NoDdl);
-        var partials = results.Where(r => r.Status == ProbeStatus.Partial).ToList();
-        var missings = results.Where(r => r.Status == ProbeStatus.Missing).ToList();
-        var withParseErrors = results.Where(r => r.ParseErrors > 0).ToList();
-
-        var drift = partials.Where(r => r.Script.Number < highestApplied)
-                            .Concat(missings.Where(r => r.Script.Number < highestApplied))
-                            .OrderBy(r => r.Script.Number)
-                            .ToList();
-        var pending = partials.Where(r => r.Script.Number > highestApplied)
-                              .Concat(missings.Where(r => r.Script.Number > highestApplied))
-                              .OrderBy(r => r.Script.Number)
-                              .ToList();
-
+        var appliedTotal = report.Totals.Applied + report.Totals.NoDdl;
         var summary = new Grid().AddColumn(new GridColumn().PadRight(3)).AddColumn();
-        summary.AddRow($"[{Theme.Subtitle}]Applied[/]", $"[{Theme.Success}]{applied}[/]");
-        summary.AddRow($"[{Theme.Subtitle}]Partial[/]", $"[{Theme.Warning}]{partials.Count}[/]  [{Theme.Muted}]({drift.Count(d => d.Status == ProbeStatus.Partial)} before head, {pending.Count(d => d.Status == ProbeStatus.Partial)} after)[/]");
-        summary.AddRow($"[{Theme.Subtitle}]Missing[/]", $"[{Theme.Danger}]{missings.Count}[/]  [{Theme.Muted}]({drift.Count(d => d.Status == ProbeStatus.Missing)} before head, {pending.Count(d => d.Status == ProbeStatus.Missing)} after)[/]");
+        summary.AddRow($"[{Theme.Subtitle}]Applied[/]", $"[{Theme.Success}]{appliedTotal}[/]");
+        summary.AddRow($"[{Theme.Subtitle}]Partial[/]", $"[{Theme.Warning}]{report.Totals.Partial}[/]  [{Theme.Muted}]({report.Drift.Count(d => d.Status == AuditScriptStatus.Partial)} before head, {report.Pending.Count(d => d.Status == AuditScriptStatus.Partial)} after)[/]");
+        summary.AddRow($"[{Theme.Subtitle}]Missing[/]", $"[{Theme.Danger}]{report.Totals.Missing}[/]  [{Theme.Muted}]({report.Drift.Count(d => d.Status == AuditScriptStatus.Missing)} before head, {report.Pending.Count(d => d.Status == AuditScriptStatus.Missing)} after)[/]");
         AnsiConsole.Write(summary);
 
-        if (pending.Count > 0)
+        if (report.Pending.Count > 0)
         {
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[{Theme.Subtitle}]Unapplied scripts after current version:[/]");
-            RenderEntryList(pending.Take(15).ToList(), pending.Count);
+            RenderAuditEntryList(report.Pending.Take(15).ToList(), report.Pending.Count);
         }
 
-        if (drift.Count > 0)
+        if (report.Drift.Count > 0)
         {
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[{Theme.Subtitle}]Drift (older scripts whose objects were later dropped or renamed):[/]");
-            RenderEntryList(drift.Take(15).ToList(), drift.Count);
+            RenderAuditEntryList(report.Drift.Take(15).ToList(), report.Drift.Count);
         }
 
-        if (withParseErrors.Count > 0)
+        if (report.Totals.WithParseErrors > 0)
         {
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine(
-                $"[{Theme.Warning}]{withParseErrors.Count} script{(withParseErrors.Count == 1 ? "" : "s")} had T-SQL parse errors; detected objects may be incomplete. See the log file.[/]");
+                $"[{Theme.Warning}]{report.Totals.WithParseErrors} script{(report.Totals.WithParseErrors == 1 ? "" : "s")} had T-SQL parse errors; detected objects may be incomplete. See the log file.[/]");
         }
-
-        AnsiConsole.WriteLine();
-        RenderProbeVerdict(logger, highestApplied, head, pending.Count, drift.Count, startFrom);
     }
 
-    private static void RenderEntryList(IReadOnlyList<ProbeEntry> entries, int totalCount)
+    private static void RenderAuditEntryList(IReadOnlyList<AuditScriptResult> entries, int totalCount)
     {
         var table = new Table
         {
@@ -537,10 +573,10 @@ public sealed class ToolkitActions
 
         foreach (var e in entries)
         {
-            var status = e.Status == ProbeStatus.Partial
+            var status = e.Status == AuditScriptStatus.Partial
                 ? $"[{Theme.Warning}]partial[/]"
                 : $"[{Theme.Danger}]missing[/]";
-            table.AddRow(e.Script.Label, status, $"{e.Present}/{e.Total}");
+            table.AddRow(e.Label, status, $"{e.ObjectsPresent}/{e.ObjectsTotal}");
         }
         AnsiConsole.Write(table);
         if (entries.Count < totalCount)
@@ -549,53 +585,94 @@ public sealed class ToolkitActions
         }
     }
 
-    private void RenderProbeVerdict(RunLogger logger, int highestApplied, int head, int pendingCount, int driftCount, int startFrom)
+    private static void RenderAuditMismatchDetails(AuditReport report)
+    {
+        var interesting = report.Pending.Concat(report.Drift)
+            .Where(e => e.Mismatches.Count > 0)
+            .Take(10)
+            .ToList();
+
+        if (interesting.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[{Theme.Subtitle}]Object-level detail:[/]");
+
+        var table = new Table
+        {
+            Border = TableBorder.Horizontal,
+            BorderStyle = Theme.BorderStyle,
+            ShowRowSeparators = false,
+            Expand = true
+        };
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Version[/]").NoWrap());
+        table.AddColumn(new TableColumn(string.Empty).NoWrap().Width(12).Padding(0, 1));
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Kind[/]").NoWrap());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Object[/]").NoWrap());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Detail[/]"));
+
+        foreach (var entry in interesting)
+        {
+            foreach (var m in entry.Mismatches.Take(8))
+            {
+                var pill = m.Status == "Differs"
+                    ? $"[{Theme.PillDiffers}] DIFFERS [/]"
+                    : $"[{Theme.PillMissing}] MISSING [/]";
+                var name = m.Schema is null ? m.Name : $"{m.Schema}.{(m.Parent is null ? "" : m.Parent + ".")}{m.Name}";
+                table.AddRow(
+                    entry.Label,
+                    pill,
+                    $"[{Theme.Muted}]{Theme.Escape(m.Kind)}[/]",
+                    $"[white]{Theme.Escape(name)}[/]",
+                    $"[{Theme.Muted}]{Theme.Escape(m.Detail)}[/]");
+            }
+            if (entry.Mismatches.Count > 8)
+            {
+                table.AddRow(entry.Label, string.Empty, string.Empty,
+                    $"[{Theme.Muted}]... {entry.Mismatches.Count - 8} more objects[/]", string.Empty);
+            }
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    private void RenderAuditVerdict(RunLogger logger, AuditReport report)
     {
         var body = new System.Text.StringBuilder();
-        string headline;
-        string colour;
-        var partialScan = startFrom > 1;
 
-        if (highestApplied == 0)
+        switch (report.Verdict)
         {
-            if (partialScan)
-            {
-                headline = "NO APPLIED VERSION IN RANGE";
-                colour = Theme.Warning;
-                body.AppendLine($"[bold {colour}]{headline}[/]");
-                body.AppendLine($"[{Theme.Muted}]No fully-applied script found in range {_locator.Label(startFrom)} to {_locator.Label(head)}. DB may be below {_locator.Label(startFrom)}; rerun from 1 for a full scan.[/]");
-            }
-            else
-            {
-                headline = "DATABASE NOT INITIALISED";
-                colour = Theme.Danger;
-                body.AppendLine($"[bold {colour}]{headline}[/]");
+            case AuditVerdict.NoAppliedVersionInRange:
+                body.AppendLine($"[bold {Theme.Warning}]NO APPLIED VERSION IN RANGE[/]");
+                body.AppendLine($"[{Theme.Muted}]No fully-applied script found in range {_locator.Label(report.StartFrom)} to {_locator.Label(report.Head)}. DB may be below {_locator.Label(report.StartFrom)}; rerun from 1 for a full scan.[/]");
+                break;
+
+            case AuditVerdict.NotInitialised:
+                body.AppendLine($"[bold {Theme.Danger}]DATABASE NOT INITIALISED[/]");
                 body.AppendLine($"[{Theme.Muted}]No version script has been fully applied to this database.[/]");
-            }
-        }
-        else if (highestApplied == head && pendingCount == 0)
-        {
-            headline = "AT HEAD";
-            colour = Theme.Success;
-            body.AppendLine($"[bold {colour}]{headline}[/]");
-            body.AppendLine($"[{Theme.Muted}]Database is at version {_locator.Label(highestApplied)} (head).[/]");
-        }
-        else
-        {
-            headline = "BEHIND HEAD";
-            colour = Theme.Warning;
-            body.AppendLine($"[bold {colour}]{headline}[/]");
-            body.AppendLine($"[{Theme.Muted}]Applied through {_locator.Label(highestApplied)}. Head is {_locator.Label(head)}. {pendingCount} script{(pendingCount == 1 ? "" : "s")} pending.[/]");
+                break;
+
+            case AuditVerdict.AtHead:
+                body.AppendLine($"[bold {Theme.Success}]AT HEAD[/]");
+                body.AppendLine($"[{Theme.Muted}]Database is at version {report.CurrentVersionLabel} (head).[/]");
+                break;
+
+            default:
+                body.AppendLine($"[bold {Theme.Warning}]BEHIND HEAD[/]");
+                body.AppendLine($"[{Theme.Muted}]Applied through {report.CurrentVersionLabel}. Head is {_locator.Label(report.Head)}. {report.Pending.Count} script{(report.Pending.Count == 1 ? "" : "s")} pending.[/]");
+                break;
         }
 
-        if (partialScan && highestApplied > 0)
+        if (report.PartialScan && report.CurrentVersion > 0)
         {
-            body.AppendLine($"[{Theme.Muted}]Partial scan: started at {_locator.Label(startFrom)}. Versions below that were not checked.[/]");
+            body.AppendLine($"[{Theme.Muted}]Partial scan: started at {_locator.Label(report.StartFrom)}. Versions below that were not checked.[/]");
         }
 
-        if (driftCount > 0)
+        if (report.Drift.Count > 0)
         {
-            body.AppendLine($"[{Theme.Warning}]{driftCount} earlier script{(driftCount == 1 ? "" : "s")} show drift (objects dropped or renamed by later migrations). Informational only - not a blocker.[/]");
+            body.AppendLine($"[{Theme.Warning}]{report.Drift.Count} earlier script{(report.Drift.Count == 1 ? "" : "s")} show drift (objects dropped or renamed by later migrations). Informational only - not a blocker.[/]");
         }
 
         var panel = new Panel(new Markup(body.ToString().TrimEnd()))
@@ -608,17 +685,14 @@ public sealed class ToolkitActions
         };
         AnsiConsole.Write(panel);
 
-        logger.LogOnly(
-            highestApplied == 0
-                ? "Detect version: DATABASE NOT INITIALISED"
-                : highestApplied == head && pendingCount == 0
-                    ? $"Detect version: AT HEAD ({_locator.Label(highestApplied)})"
-                    : $"Detect version: {_locator.Label(highestApplied)} applied, head {_locator.Label(head)}, {pendingCount} pending, {driftCount} drift");
+        logger.LogOnly(report.Verdict switch
+        {
+            AuditVerdict.NotInitialised => "Audit: DATABASE NOT INITIALISED",
+            AuditVerdict.NoAppliedVersionInRange => "Audit: NO APPLIED VERSION IN RANGE",
+            AuditVerdict.AtHead => $"Audit: AT HEAD ({report.CurrentVersionLabel})",
+            _ => $"Audit: {report.CurrentVersionLabel} applied, head {_locator.Label(report.Head)}, {report.Pending.Count} pending, {report.Drift.Count} drift"
+        });
     }
-
-    private enum ProbeStatus { Applied, Partial, Missing, NoDdl }
-
-    private sealed record ProbeEntry(VersionScript Script, ProbeStatus Status, int Present, int Total, int ParseErrors);
 
     public void VerifyVersion(string database, int number)
     {
@@ -666,61 +740,116 @@ public sealed class ToolkitActions
         });
     }
 
-    public int VerifyForCi(string database, int number)
+    public int VerifyForCi(string database, int number, bool json = false, string? reportPath = null)
     {
         if (number <= 0)
         {
-            AnsiConsole.MarkupLine($"[{Theme.Danger}]--verify requires a version number greater than 0.[/]");
+            Console.Error.WriteLine("--verify requires a version number greater than 0.");
             return 2;
         }
 
         var script = _locator.GetSingle(number);
         if (script is null)
         {
-            AnsiConsole.MarkupLine($"[{Theme.Danger}]Script {_locator.Label(number)} not found in {Theme.Escape(_locator.FolderPath)}[/]");
+            Console.Error.WriteLine($"Script {_locator.Label(number)} not found in {_locator.FolderPath}");
             return 2;
         }
 
-        int exitCode = 1;
-        RunWithSession(database, (session, logger, _) =>
+        using var logger = RunLogger.Create(database);
+        if (!json)
         {
-            string raw;
+            Banner.ConnectionInfo(_factory.Server, database, _locator.FolderPath, logger.LogFilePath);
+        }
+
+        SqlSession session;
+        try
+        {
+            session = SqlSession.Open(_factory, database);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Cannot connect to {_factory.Server} / {database}: {ex.Message}");
+            return 3;
+        }
+
+        string raw;
+        VerificationReport report;
+        using (session)
+        {
             try
             {
                 raw = File.ReadAllText(script.File.FullName);
             }
             catch (IOException ex)
             {
-                logger.Error($"Could not read {script.File.FullName}: {ex.Message}");
-                return;
+                Console.Error.WriteLine($"Could not read {script.File.FullName}: {ex.Message}");
+                return 2;
             }
 
             var extraction = new DdlExtractor().Extract(raw);
-            if (extraction.Objects.Count == 0)
-            {
-                logger.Warn($"No detectable DDL in {_locator.Label(number)} (script may be data-only).");
-                exitCode = 0;
-                return;
-            }
-
             var verifier = new VersionVerifier(session, _defaultSchema);
-            var report = verifier.Verify(number, extraction.Objects, extraction.ParseErrors);
+            report = verifier.Verify(number, extraction.Objects, extraction.ParseErrors);
+        }
 
-            var line =
-                $"{_locator.Label(number)}: {report.Verdict} (OK {report.OkCount}, differs {report.DiffersCount}, missing {report.MissingCount}, total {report.Results.Count})";
-            var colour = report.Verdict == VerificationVerdict.FullyApplied ? Theme.Success : Theme.Danger;
-            AnsiConsole.MarkupLine($"[{colour}]{Theme.Escape(line)}[/]");
-            logger.LogOnly(BuildVerdictLogLine(report));
+        var mismatches = report.Results
+            .Where(r => r.Status != VerificationStatus.Matches)
+            .Select(r => new AuditObjectResult(
+                r.Object.Kind.ToString(), r.Object.Schema, r.Object.Parent, r.Object.Name,
+                r.Status.ToString(), r.Detail))
+            .ToList();
 
-            exitCode = report.Verdict switch
+        var verifyReport = new SingleVerifyReport(
+            Tool: AppInfo.Name,
+            ToolVersion: AppInfo.Version,
+            ScannedAtUtc: DateTime.UtcNow,
+            Server: _factory.Server,
+            Database: database,
+            Version: number,
+            Label: _locator.Label(number),
+            File: script.File.FullName,
+            Verdict: report.Verdict.ToString(),
+            ObjectsPresent: report.OkCount,
+            ObjectsTotal: report.Results.Count,
+            Differs: report.DiffersCount,
+            Missing: report.MissingCount,
+            ParseErrors: report.ParseWarnings.Count,
+            Mismatches: mismatches);
+
+        if (!string.IsNullOrWhiteSpace(reportPath))
+        {
+            try
             {
-                VerificationVerdict.FullyApplied => 0,
-                VerificationVerdict.NoObjects    => 0,
-                _                                => 1
-            };
-        });
+                File.WriteAllText(reportPath, verifyReport.ToJson());
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"Could not write report to {reportPath}: {ex.Message}");
+                return 2;
+            }
+        }
 
-        return exitCode;
+        if (json)
+        {
+            Console.WriteLine(verifyReport.ToJson());
+        }
+        else
+        {
+            var line = report.Verdict == VerificationVerdict.NoObjects
+                ? $"{_locator.Label(number)}: no detectable DDL (script may be data-only)"
+                : $"{_locator.Label(number)}: {report.Verdict} (OK {report.OkCount}, differs {report.DiffersCount}, missing {report.MissingCount}, total {report.Results.Count})";
+            var colour = report.Verdict is VerificationVerdict.FullyApplied or VerificationVerdict.NoObjects
+                ? Theme.Success
+                : Theme.Danger;
+            AnsiConsole.MarkupLine($"[{colour}]{Theme.Escape(line)}[/]");
+        }
+        logger.LogOnly(BuildVerdictLogLine(report));
+
+        return report.Verdict switch
+        {
+            VerificationVerdict.FullyApplied => 0,
+            VerificationVerdict.NoObjects    => 0,
+            _                                => 1
+        };
     }
 
     private void RenderVerificationReport(RunLogger logger, VerificationReport report)

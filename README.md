@@ -26,6 +26,7 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 | **Restore** | Restores a `.bak` into a target DB. Auto-discovers logical file names (`RESTORE FILELISTONLY`), auto-uses server default data/log paths, forces `SINGLE_USER WITH ROLLBACK IMMEDIATE` if the target already exists, then `MULTI_USER` after. |
 | **Clone** | Backup source → Restore as target, in one step. |
 | **Setup wizard** | First run opens a guided setup: server, authentication (with a live connection test), database picker straight from `sys.databases`, script-folder validation with a live count of matching files, and naming-scheme presets. Rerun it any time from the **Settings** menu or with `--setup`. |
+| **Audit** | One command, the whole truth: `--audit` probes every script in range and emits a full drift report — applied / partial / missing per script, object-level mismatch detail, drift vs pending split, and a machine-readable JSON payload (`--output json`, `--report file.json`) for pipelines and dashboards. |
 
 **Small quality-of-life touches**: a grouped, searchable menu (arrow keys or type to filter); typing `back`, `menu`, or `cancel` at any prompt returns to the main menu; pre-flight input validation; retry-with-edits loops on operation failures; completion panels with `OSC 52` clipboard auto-copy and `OSC 8` folder hyperlinks; per-user Debug config for F5-without-typing.
 
@@ -99,6 +100,10 @@ schemascope --verify 42 --database MyDb --server MACHINE\INSTANCE --version-fold
 # Detect the current applied version.
 schemascope --detect --database MyDb --start-from 1
 
+# Full drift audit: every script in range, object-level detail, JSON for pipelines.
+# Exit 0 = at head, 1 = behind (add --strict to also fail on drift).
+schemascope --audit --database MyDb --output json --report drift-report.json
+
 # Backup / Restore / Clone (no scripts folder needed).
 schemascope --backup  --source MyDb --backup-path ./backups/MyDb.bak
 schemascope --restore --target MyDb_Restored --backup-path ./backups/MyDb.bak
@@ -109,6 +114,10 @@ schemascope --clone   --source MyDb --target MyDb_Copy
 |---|---|
 | `--verify <n>` | Verify version `<n>` against the DB. Read-only. Exits `0` if fully applied, `1` on drift/missing, `2` on bad input. |
 | `--detect` | Detect the highest fully-applied version. Honours `--start-from`. |
+| `--audit` | Probe **every** script in range and report drift + pending with object-level detail. Exits `0` at head, `1` behind. |
+| `-o`, `--output <fmt>` | Output for `--verify` / `--detect` / `--audit`: `text` (default) or `json`. JSON goes to stdout, diagnostics to stderr — pipe-safe. |
+| `--report <path>` | Also write the JSON report to a file (works in text mode too). |
+| `--strict` | With `--audit`: exit `1` when drift exists, even at head. |
 | `--backup` | Back up a database. Requires `--source` and `--backup-path`. |
 | `--restore` | Restore a backup. Requires `--target` and `--backup-path`; optional `--data-dir` / `--log-dir`. |
 | `--clone` | Clone a database. Requires `--source` and `--target`; optional `--backup-path`. |
@@ -117,7 +126,34 @@ schemascope --clone   --source MyDb --target MyDb_Copy
 | `--backup-path <p>` | Path to the `.bak` file. |
 | `--data-dir <p>` / `--log-dir <p>` | Override restore data/log file directories. |
 
-Only one operation can run per invocation. The `--verify` exit code makes it a drop-in **read-only gate for CI pipelines** (e.g. fail a deploy when the target DB has drifted from the expected version).
+Only one operation can run per invocation. The `--verify` and `--audit` exit codes make them drop-in **read-only gates for CI pipelines** (e.g. fail a deploy when the target DB has drifted from the expected version).
+
+#### JSON report shape
+
+`--output json` prints a single JSON document to stdout (diagnostics go to stderr). The audit payload includes the verdict, current/head versions, per-status totals, and the full per-script breakdown with object-level mismatches:
+
+```json
+{
+  "tool": "SchemaScope",
+  "verdict": "behindHead",
+  "currentVersion": 2,
+  "currentVersionLabel": "1.0.0.2",
+  "head": 3,
+  "totals": { "scripts": 3, "applied": 1, "partial": 1, "missing": 1, "noDdl": 0, "withParseErrors": 0 },
+  "pending": [
+    {
+      "version": 3, "label": "1.0.0.3", "status": "missing",
+      "objectsPresent": 0, "objectsTotal": 3,
+      "mismatches": [
+        { "kind": "Table", "schema": "dbo", "name": "Invoices", "status": "Missing", "detail": "table not present" }
+      ]
+    }
+  ],
+  "drift": [ { "version": 1, "label": "1.0.0.1", "status": "partial" } ]
+}
+```
+
+Unlike journal-based tools (DbUp, Flyway), the audit never trusts a history table — every claim is verified against the live schema, so a hand-edited database or half-failed script can't hide.
 
 ### Script convention
 By default, files are named `1.0.0.N.sql` where `N` is a positive integer (`1.0.0.1.sql`, `1.0.0.2.sql`, ...). The naming scheme is **not hard-coded**: it's defined by `VersionScheme` in the config file, so a `V12__add_users.sql`-style convention works just as well (see [Configuration](#configuration)). Scripts may reference the target database via the `[DatabaseName]` placeholder, which SchemaScope substitutes textually before execution.
@@ -305,6 +341,11 @@ SchemaScope/
 - [x] First-run setup wizard with live connection test and database picker
 - [x] In-app Settings (rerun the wizard, reconnect without restarting)
 - [x] Session-only masked password entry (never written to disk)
+- [x] `--audit`: full-range drift report with object-level detail
+- [x] `--output json` / `--report` machine-readable output for verify, detect, and audit
+- [ ] Journal readers: audit databases managed by DbUp / Flyway
+- [ ] GitHub Action + container image
+- [ ] Opt-in history table (tracks data-only scripts; verification stays evidence-based)
 
 ---
 

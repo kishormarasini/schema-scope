@@ -7,7 +7,14 @@ public enum CliCommand
     Restore,
     Clone,
     Verify,
-    Detect
+    Detect,
+    Audit
+}
+
+public enum OutputFormat
+{
+    Text,
+    Json
 }
 
 public sealed class CliOptions
@@ -26,6 +33,10 @@ public sealed class CliOptions
     public bool ShowHelp { get; set; }
     public bool ShowVersion { get; set; }
     public bool RunSetup { get; set; }
+
+    public OutputFormat Output { get; set; } = OutputFormat.Text;
+    public string? ReportPath { get; set; }
+    public bool Strict { get; set; }
 
     public string? SourceDatabase { get; set; }
     public string? TargetDatabase { get; set; }
@@ -90,6 +101,25 @@ public sealed class CliOptions
                     break;
                 case "--detect":
                     options.SetCommand(CliCommand.Detect);
+                    break;
+                case "--audit":
+                    options.SetCommand(CliCommand.Audit);
+                    break;
+                case "--output":
+                case "-o":
+                    var format = ReadValue(args, ref i, arg);
+                    options.Output = format.ToLowerInvariant() switch
+                    {
+                        "text" => OutputFormat.Text,
+                        "json" => OutputFormat.Json,
+                        _ => throw new ArgumentException($"Unknown output format '{format}'. Use text or json.")
+                    };
+                    break;
+                case "--report":
+                    options.ReportPath = ReadValue(args, ref i, arg);
+                    break;
+                case "--strict":
+                    options.Strict = true;
                     break;
                 case "--verify":
                     options.SetCommand(CliCommand.Verify);

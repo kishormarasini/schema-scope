@@ -174,12 +174,14 @@ if (string.IsNullOrWhiteSpace(server))
 }
 
 var locator = new VersionScriptLocator(versionFolder, config.VersionScheme);
-var needsScriptsFolder = options.Command is CliCommand.Auto or CliCommand.Verify or CliCommand.Detect;
+var needsScriptsFolder = options.Command is CliCommand.Auto or CliCommand.Verify or CliCommand.Detect or CliCommand.Audit;
 if (needsScriptsFolder && !locator.FolderExists)
 {
     AnsiConsole.MarkupLine($"[{Theme.Danger}]Scripts folder not found: {Markup.Escape(versionFolder)}[/]");
     return 2;
 }
+
+var jsonOutput = options.Output == OutputFormat.Json;
 
 var factory = new SqlConnectionFactory(server, config.Connection);
 
@@ -201,11 +203,18 @@ else
 
 if (!connectOk)
 {
-    AnsiConsole.MarkupLine($"[{Theme.Danger}]Cannot connect to {Markup.Escape(server)}:[/]");
-    AnsiConsole.MarkupLine($"[{Theme.Muted}]{Markup.Escape(connectError ?? "(no details)")}[/]");
-    if (options.IsInteractive)
+    if (jsonOutput)
     {
-        AnsiConsole.MarkupLine($"[{Theme.Muted}]Run [white]schemascope --setup[/] or open Settings to fix the connection.[/]");
+        Console.Error.WriteLine($"Cannot connect to {server}: {connectError ?? "(no details)"}");
+    }
+    else
+    {
+        AnsiConsole.MarkupLine($"[{Theme.Danger}]Cannot connect to {Markup.Escape(server)}:[/]");
+        AnsiConsole.MarkupLine($"[{Theme.Muted}]{Markup.Escape(connectError ?? "(no details)")}[/]");
+        if (options.IsInteractive)
+        {
+            AnsiConsole.MarkupLine($"[{Theme.Muted}]Run [white]schemascope --setup[/] or open Settings to fix the connection.[/]");
+        }
     }
     return 3;
 }
@@ -240,10 +249,13 @@ if (options.IsInteractive)
 
 var actions = BuildActions();
 
-AnsiConsole.MarkupLine(
-    $"[{Theme.Muted}]server[/] [{Theme.Info}]{Markup.Escape(server)}[/]" +
-    (string.IsNullOrWhiteSpace(databaseName) ? string.Empty : $"  [{Theme.Muted}]db[/] [{Theme.Info}]{Markup.Escape(databaseName)}[/]") +
-    (string.IsNullOrWhiteSpace(versionFolder) ? string.Empty : $"  [{Theme.Muted}]scripts[/] {Markup.Escape(versionFolder)}"));
+if (!jsonOutput)
+{
+    AnsiConsole.MarkupLine(
+        $"[{Theme.Muted}]server[/] [{Theme.Info}]{Markup.Escape(server)}[/]" +
+        (string.IsNullOrWhiteSpace(databaseName) ? string.Empty : $"  [{Theme.Muted}]db[/] [{Theme.Info}]{Markup.Escape(databaseName)}[/]") +
+        (string.IsNullOrWhiteSpace(versionFolder) ? string.Empty : $"  [{Theme.Muted}]scripts[/] {Markup.Escape(versionFolder)}"));
+}
 
 switch (options.Command)
 {
@@ -257,9 +269,17 @@ switch (options.Command)
         return actions.RunClone(options.SourceDatabase!, options.TargetDatabase!, options.BackupPath, options.DataDir, options.LogDir) ? 0 : 1;
 
     case CliCommand.Verify:
-        return actions.VerifyForCi(databaseName, options.VerifyTarget);
+        return actions.VerifyForCi(databaseName, options.VerifyTarget, jsonOutput, options.ReportPath);
+
+    case CliCommand.Audit:
+        return actions.RunAudit(databaseName, options.StartFrom, options.EndAt, jsonOutput, options.ReportPath, options.Strict);
 
     case CliCommand.Detect:
+        if (jsonOutput || !string.IsNullOrWhiteSpace(options.ReportPath))
+        {
+            var detectCode = actions.RunAudit(databaseName, options.StartFrom, options.EndAt, jsonOutput, options.ReportPath, strict: false);
+            return detectCode >= 2 ? detectCode : 0;
+        }
         actions.DetectCurrentVersion(databaseName, options.StartFrom);
         return 0;
 
@@ -306,8 +326,10 @@ static void PrintHelp()
     AnsiConsole.WriteLine("              [--skip-prepatch | --prepatch-only]");
     AnsiConsole.WriteLine();
     AnsiConsole.MarkupLine($"[{Theme.Muted}]Usage (operations):[/]");
-    AnsiConsole.WriteLine("  schemascope --verify <n> --database <name> [--version-folder <path>]");
-    AnsiConsole.WriteLine("  schemascope --detect --database <name> [--start-from <n>]");
+    AnsiConsole.WriteLine("  schemascope --verify <n> --database <name> [--version-folder <path>] [--output json]");
+    AnsiConsole.WriteLine("  schemascope --detect --database <name> [--start-from <n>] [--output json]");
+    AnsiConsole.WriteLine("  schemascope --audit  --database <name> [--start-from <n>] [--end-at <n>]");
+    AnsiConsole.WriteLine("              [--output json] [--report <file.json>] [--strict]");
     AnsiConsole.WriteLine("  schemascope --backup  --source <db> --backup-path <file.bak>");
     AnsiConsole.WriteLine("  schemascope --restore --target <db> --backup-path <file.bak> [--data-dir <d>] [--log-dir <d>]");
     AnsiConsole.WriteLine("  schemascope --clone   --source <db> --target <db> [--backup-path <file.bak>]");
@@ -326,6 +348,10 @@ static void PrintHelp()
     AnsiConsole.MarkupLine($"[{Theme.Muted}]Operations:[/]");
     AnsiConsole.MarkupLine("      --verify <n>       Verify a version against the DB. Exit 0 = applied, 1 = drift (CI-friendly).");
     AnsiConsole.MarkupLine("      --detect           Detect the current applied version.");
+    AnsiConsole.MarkupLine("      --audit            Full drift audit of every script in range. Exit 0 = at head, 1 = behind.");
+    AnsiConsole.MarkupLine("  -o, --output <fmt>     Output format for verify/detect/audit: text (default) or json.");
+    AnsiConsole.MarkupLine("      --report <path>    Also write the JSON report to a file.");
+    AnsiConsole.MarkupLine("      --strict           Audit only: exit 1 when drift exists, even at head.");
     AnsiConsole.MarkupLine("      --backup           Back up a database. Needs --source and --backup-path.");
     AnsiConsole.MarkupLine("      --restore          Restore a backup. Needs --target and --backup-path.");
     AnsiConsole.MarkupLine("      --clone            Clone a database. Needs --source and --target.");
