@@ -67,6 +67,15 @@ dotnet publish src/SchemaScope -c Release -r win-x64 --self-contained -p:Publish
 # Output: src/SchemaScope/bin/Release/net10.0/win-x64/publish/schemascope(.exe)
 ```
 
+### Install as a dotnet tool
+
+```bash
+dotnet tool install --global schemascope    # once published to NuGet.org
+schemascope --version
+```
+
+Every release also attaches the `.nupkg` and self-contained binaries for win-x64, linux-x64, osx-x64, and osx-arm64.
+
 ### Non-interactive
 Pass `--database` to enter scripted mode.
 
@@ -87,6 +96,8 @@ schemascope --database MyDb --server MACHINE\INSTANCE --version-folder D:\migrat
 | `--skip-prepatch` | Skip prepatch; run versions only. |
 | `--prepatch-only` | Run prepatch only. |
 | `--setup` | Run the interactive setup wizard. |
+| `--dry-run` | Print the execution plan — per script: batches, detected objects, parse errors — without touching the database. Exit `1` if any step has problems. |
+| `--tx <mode>` | `none` (default) or `per-script`: wrap each script in a transaction and roll back on failure, so a failed script leaves no partial changes. |
 | `-h`, `--help` | Show help. |
 | `-v`, `--version` | Print app name, version, author, and license, then exit. |
 
@@ -385,6 +396,8 @@ SchemaScope/
 - [x] Journal cross-check: audit databases managed by DbUp / Flyway (`--journal auto`)
 - [x] GitHub Action (composite, with job summary + outputs) and GHCR container image
 - [x] Hybrid mode: opt-in `schemascope_history` table (tracks data-only scripts; verification stays evidence-based)
+- [x] `dotnet tool install -g schemascope` packaging (nupkg attached to releases; NuGet.org push wired)
+- [x] `--dry-run` execution plan and `--tx per-script` transactional rollback
 
 ---
 

@@ -56,9 +56,12 @@ public sealed class SqlSession : IDisposable
         return cmd;
     }
 
-    public void ExecuteNonQuery(string sql)
+    public SqlTransaction BeginTransaction() => _connection.BeginTransaction();
+
+    public void ExecuteNonQuery(string sql, SqlTransaction? transaction = null)
     {
         using var cmd = CreateCommand(sql);
+        cmd.Transaction = transaction;
         cmd.ExecuteNonQuery();
     }
 

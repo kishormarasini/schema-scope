@@ -189,6 +189,18 @@ if (needsScriptsFolder && !locator.FolderExists)
 
 var jsonOutput = options.Output == OutputFormat.Json;
 
+if (options.DryRun && options.Command == CliCommand.Auto && !options.IsInteractive)
+{
+    var dryRunActions = new ToolkitActions(
+        new SqlConnectionFactory(server, config.Connection),
+        locator,
+        prepatchFile,
+        config.DefaultSchema,
+        trackHistory: false,
+        options.TransactionPerScript);
+    return dryRunActions.RunDryRun(databaseName, options.StartFrom, options.EndAt, options.SkipPrepatch, options.PrepatchOnly);
+}
+
 var factory = new SqlConnectionFactory(server, config.Connection);
 
 string? connectError = null;
@@ -242,7 +254,8 @@ ToolkitActions BuildActions() => new(
     new VersionScriptLocator(config.VersionFolder, config.VersionScheme),
     config.PrepatchFile,
     config.DefaultSchema,
-    config.TrackHistory || options.TrackHistory);
+    config.TrackHistory || options.TrackHistory,
+    options.TransactionPerScript);
 
 if (options.IsInteractive)
 {
@@ -352,6 +365,8 @@ static void PrintHelp()
     AnsiConsole.MarkupLine("      --end-at           Highest version to run. 0 = no upper bound.");
     AnsiConsole.MarkupLine("      --skip-prepatch    Skip prepatch. Run version scripts only.");
     AnsiConsole.MarkupLine("      --prepatch-only    Run prepatch only. No version scripts.");
+    AnsiConsole.MarkupLine("      --dry-run          Show the execution plan (batches, objects, parse errors) without running anything.");
+    AnsiConsole.MarkupLine("      --tx <mode>        Transaction mode for script runs: none (default) or per-script (rollback on failure).");
     AnsiConsole.WriteLine();
     AnsiConsole.MarkupLine($"[{Theme.Muted}]Operations:[/]");
     AnsiConsole.MarkupLine("      --verify <n>       Verify a version against the DB. Exit 0 = applied, 1 = drift (CI-friendly).");

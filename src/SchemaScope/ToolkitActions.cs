@@ -17,19 +17,22 @@ public sealed class ToolkitActions
     private readonly string _prepatchFile;
     private readonly string _defaultSchema;
     private readonly bool _trackHistory;
+    private readonly bool _transactionPerScript;
 
     public ToolkitActions(
         SqlConnectionFactory factory,
         VersionScriptLocator locator,
         string prepatchFile,
         string defaultSchema = "dbo",
-        bool trackHistory = false)
+        bool trackHistory = false,
+        bool transactionPerScript = false)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _prepatchFile = prepatchFile ?? string.Empty;
         _defaultSchema = string.IsNullOrWhiteSpace(defaultSchema) ? "dbo" : defaultSchema;
         _trackHistory = trackHistory;
+        _transactionPerScript = transactionPerScript;
     }
 
     public string Server => _factory.Server;
@@ -170,7 +173,7 @@ public sealed class ToolkitActions
 
         try
         {
-            var runner = new SqlScriptRunner(session, logger, database);
+            var runner = new SqlScriptRunner(session, logger, database, _transactionPerScript);
             body(session, logger, runner);
         }
         finally
@@ -400,6 +403,93 @@ public sealed class ToolkitActions
         }
 
         RunWithSession(database, (session, logger, runner) => ExecuteVersionScript(session, logger, runner, script));
+    }
+
+    public int RunDryRun(string database, int from, int to, bool skipPrepatch, bool prepatchOnly)
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"  [{Theme.PillBrand}] DRY RUN [/] [{Theme.Muted}]Nothing will be executed. Target database:[/] [{Theme.Info}]{Theme.Escape(database)}[/]");
+        AnsiConsole.WriteLine();
+
+        var extractor = new DdlExtractor();
+        var table = new Table
+        {
+            Border = TableBorder.Horizontal,
+            BorderStyle = Theme.BorderStyle,
+            ShowRowSeparators = false,
+            Expand = false
+        };
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Step[/]").NoWrap());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]File[/]").NoWrap());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Batches[/]").RightAligned());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Objects[/]").RightAligned());
+        table.AddColumn(new TableColumn($"[{Theme.Subtitle}]Parse errors[/]").RightAligned());
+
+        var problems = 0;
+        var steps = 0;
+
+        var runPrepatch = !skipPrepatch && !string.IsNullOrWhiteSpace(_prepatchFile);
+        if (runPrepatch)
+        {
+            steps++;
+            problems += AddDryRunRow(table, extractor, database, "Prepatch", _prepatchFile);
+        }
+
+        if (!prepatchOnly)
+        {
+            foreach (var script in _locator.GetInRange(from, to))
+            {
+                steps++;
+                problems += AddDryRunRow(table, extractor, database, script.Label, script.File.FullName);
+            }
+        }
+
+        if (steps == 0)
+        {
+            AnsiConsole.MarkupLine($"  [{Theme.Warning}]Nothing to run: no prepatch and no version scripts in range.[/]");
+            return 2;
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+
+        var mode = _transactionPerScript ? "one transaction per script" : "no transactions";
+        AnsiConsole.MarkupLine(problems == 0
+            ? $"  [{Theme.Success}]✓[/] {steps} step{(steps == 1 ? "" : "s")} ready to run ({mode})."
+            : $"  [{Theme.Warning}]▲[/] {steps} step{(steps == 1 ? "" : "s")} planned, {problems} with problems — review before running.");
+
+        return problems == 0 ? 0 : 1;
+    }
+
+    private static int AddDryRunRow(Table table, DdlExtractor extractor, string database, string label, string filePath)
+    {
+        string raw;
+        try
+        {
+            raw = File.ReadAllText(filePath);
+        }
+        catch (IOException ex)
+        {
+            table.AddRow(
+                $"[white]{Theme.Escape(label)}[/]",
+                $"[{Theme.Danger}]{Theme.Escape(Path.GetFileName(filePath))} — {Theme.Escape(ex.Message)}[/]",
+                "-", "-", "-");
+            return 1;
+        }
+
+        var patched = SqlScriptRunner.ApplySubstitutions(raw, database);
+        var batches = SqlBatchSplitter.Split(patched);
+        var extraction = extractor.Extract(patched);
+        var parseErrors = extraction.ParseErrors.Count;
+
+        table.AddRow(
+            $"[white]{Theme.Escape(label)}[/]",
+            $"[{Theme.Muted}]{Theme.Escape(Path.GetFileName(filePath))}[/]",
+            batches.Count.ToString(),
+            extraction.Objects.Count.ToString(),
+            parseErrors == 0 ? $"[{Theme.Success}]0[/]" : $"[{Theme.Danger}]{parseErrors}[/]");
+
+        return parseErrors > 0 ? 1 : 0;
     }
 
     public void DetectCurrentVersion(string database, int startFrom = 0)

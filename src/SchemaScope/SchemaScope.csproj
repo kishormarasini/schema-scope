@@ -16,7 +16,18 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Version>0.1.0</Version>
     <InformationalVersion>0.1.0</InformationalVersion>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>schemascope</ToolCommandName>
+    <PackageId>schemascope</PackageId>
+    <PackageTags>sql-server;migrations;schema;drift;verification;dbup;flyway;cli</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/kishormarasini/schema-scope</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/kishormarasini/schema-scope</PackageProjectUrl>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <!-- Cross-platform: the runtime identifier is supplied at publish time

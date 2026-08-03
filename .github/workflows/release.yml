@@ -38,10 +38,19 @@ jobs:
             tar -czf "../dist/schemascope-${version}-${rid}.tar.gz" -C "$rid" schemascope
           done
 
+      - name: Pack dotnet tool
+        run: dotnet pack src/SchemaScope -c Release -o dist
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME"
+
+      - name: Publish to NuGet.org
+        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push dist/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
   container:
     runs-on: ubuntu-latest

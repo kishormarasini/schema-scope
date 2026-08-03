@@ -40,6 +40,8 @@ public sealed class CliOptions
     public bool Strict { get; set; }
     public string? Journal { get; set; }
     public bool TrackHistory { get; set; }
+    public bool DryRun { get; set; }
+    public bool TransactionPerScript { get; set; }
 
     public string? SourceDatabase { get; set; }
     public string? TargetDatabase { get; set; }
@@ -161,6 +163,18 @@ public sealed class CliOptions
                     break;
                 case "--track-history":
                     options.TrackHistory = true;
+                    break;
+                case "--dry-run":
+                    options.DryRun = true;
+                    break;
+                case "--tx":
+                    var tx = ReadValue(args, ref i, arg).ToLowerInvariant();
+                    options.TransactionPerScript = tx switch
+                    {
+                        "per-script" => true,
+                        "none" => false,
+                        _ => throw new ArgumentException($"Unknown transaction mode '{tx}'. Use per-script or none.")
+                    };
                     break;
 
                 case "--help":
