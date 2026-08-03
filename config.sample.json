@@ -4,6 +4,7 @@
   "VersionFolder": "D:\\path\\to\\versioned\\scripts",
   "PrepatchFile": "",
   "DefaultSchema": "dbo",
+  "TrackHistory": false,
   "VersionScheme": {
     "FilePattern": "^1\\.0\\.0\\.(\\d+)\\.sql$",
     "FileNameFormat": "1.0.0.{0}.sql",

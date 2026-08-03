@@ -103,6 +103,24 @@ public class JournalCrossCheckTests
     }
 
     [Fact]
+    public void DataOnlyScriptWithoutJournalRow_IsUntrackedWithMayNeverHaveRunDetail()
+    {
+        var scripts = new[]
+        {
+            Script(1, AuditScriptStatus.Applied, 1, 1),
+            Script(2, AuditScriptStatus.NoDdl),
+        };
+        var audit = Audit(currentVersion: 2, scripts);
+        var entries = new[] { Journaled("1.0.0.1.sql") };
+
+        var result = JournalReader.CrossCheck("schemascope", "dbo.schemascope_history", entries, audit);
+
+        var untracked = Assert.Single(result.AppliedButNotJournaled);
+        Assert.Equal("1.0.0.2", untracked.Label);
+        Assert.Contains("may never have run", untracked.Detail);
+    }
+
+    [Fact]
     public void Match_EmbeddedResourceName_MatchesBySuffix()
     {
         var scripts = new[] { Script(5, AuditScriptStatus.Applied, 1, 1) };

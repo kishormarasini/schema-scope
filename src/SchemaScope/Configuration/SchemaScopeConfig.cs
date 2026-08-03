@@ -13,6 +13,8 @@ public sealed class SchemaScopeConfig
 
     public string DefaultSchema { get; set; } = "dbo";
 
+    public bool TrackHistory { get; set; }
+
     public VersionScheme VersionScheme { get; set; } = new();
     public ConnectionSettings Connection { get; set; } = new();
 

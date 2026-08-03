@@ -5,11 +5,16 @@ namespace SchemaScope.Auditing;
 
 public static class JournalReader
 {
-    public const string DbUpTable   = "dbo.SchemaVersions";
-    public const string FlywayTable = "dbo.flyway_schema_history";
+    public const string DbUpTable        = "dbo.SchemaVersions";
+    public const string FlywayTable      = "dbo.flyway_schema_history";
+    public const string SchemaScopeTable = HistoryTracker.Table;
 
     public static string? DetectProvider(SqlSession session)
     {
+        if (TableExists(session, SchemaScopeTable))
+        {
+            return "schemascope";
+        }
         if (TableExists(session, DbUpTable))
         {
             return "dbup";
@@ -25,10 +30,33 @@ public static class JournalReader
     {
         return provider.ToLowerInvariant() switch
         {
-            "dbup"   => ReadDbUp(session),
-            "flyway" => ReadFlyway(session),
-            _ => throw new ArgumentException($"Unknown journal provider '{provider}'. Use dbup, flyway, or auto.")
+            "dbup"        => ReadDbUp(session),
+            "flyway"      => ReadFlyway(session),
+            "schemascope" => ReadSchemaScope(session),
+            _ => throw new ArgumentException($"Unknown journal provider '{provider}'. Use dbup, flyway, schemascope, or auto.")
         };
+    }
+
+    private static (string, IReadOnlyList<JournalEntry>)? ReadSchemaScope(SqlSession session)
+    {
+        if (!TableExists(session, SchemaScopeTable))
+        {
+            return null;
+        }
+
+        var entries = new List<JournalEntry>();
+        using var cmd = session.CreateCommand(
+            "SELECT ScriptName, CAST([Version] AS NVARCHAR(20)), AppliedAtUtc, Success FROM dbo.schemascope_history");
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            entries.Add(new JournalEntry(
+                ScriptName: reader.GetString(0),
+                Version: reader.IsDBNull(1) ? null : reader.GetString(1),
+                AppliedAtUtc: reader.IsDBNull(2) ? null : reader.GetDateTime(2),
+                Success: !reader.IsDBNull(3) && reader.GetBoolean(3)));
+        }
+        return (SchemaScopeTable, entries);
     }
 
     private static (string, IReadOnlyList<JournalEntry>)? ReadDbUp(SqlSession session)
@@ -122,9 +150,12 @@ public static class JournalReader
         }
 
         var appliedButNotJournaled = audit.Scripts
-            .Where(s => s.Status == AuditScriptStatus.Applied && !matchedVersions.Contains(s.Version))
+            .Where(s => !matchedVersions.Contains(s.Version)
+                && s.Status is AuditScriptStatus.Applied or AuditScriptStatus.NoDdl)
             .Select(s => new JournalFinding(System.IO.Path.GetFileName(s.File), s.Label,
-                "All objects exist in the schema, but the journal has no record of this script running."))
+                s.Status == AuditScriptStatus.Applied
+                    ? "All objects exist in the schema, but the journal has no record of this script running."
+                    : "Script has no DDL to verify and no journal record — it may never have run."))
             .ToList();
 
         return new JournalAudit(

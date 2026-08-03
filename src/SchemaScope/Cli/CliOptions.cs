@@ -39,6 +39,7 @@ public sealed class CliOptions
     public string? ReportPath { get; set; }
     public bool Strict { get; set; }
     public string? Journal { get; set; }
+    public bool TrackHistory { get; set; }
 
     public string? SourceDatabase { get; set; }
     public string? TargetDatabase { get; set; }
@@ -129,9 +130,9 @@ public sealed class CliOptions
                     break;
                 case "--journal":
                     var journal = ReadValue(args, ref i, arg).ToLowerInvariant();
-                    if (journal is not ("dbup" or "flyway" or "auto"))
+                    if (journal is not ("dbup" or "flyway" or "schemascope" or "auto"))
                     {
-                        throw new ArgumentException($"Unknown journal provider '{journal}'. Use dbup, flyway, or auto.");
+                        throw new ArgumentException($"Unknown journal provider '{journal}'. Use dbup, flyway, schemascope, or auto.");
                     }
                     options.Journal = journal;
                     break;
@@ -157,6 +158,9 @@ public sealed class CliOptions
 
                 case "--setup":
                     options.RunSetup = true;
+                    break;
+                case "--track-history":
+                    options.TrackHistory = true;
                     break;
 
                 case "--help":

@@ -28,6 +28,7 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 | **Setup wizard** | First run opens a guided setup: server, authentication (with a live connection test), database picker straight from `sys.databases`, script-folder validation with a live count of matching files, and naming-scheme presets. Rerun it any time from the **Settings** menu or with `--setup`. |
 | **Audit** | One command, the whole truth: `--audit` probes every script in range and emits a full drift report — applied / partial / missing per script, object-level mismatch detail, drift vs pending split, and a machine-readable JSON payload (`--output json`, `--report file.json`) for pipelines and dashboards. |
 | **Journal cross-check** | Already on DbUp or Flyway? `--journal auto` reads their history table (`SchemaVersions` / `flyway_schema_history`) and checks every claim against the live schema. Catches **journal lies** (recorded as applied, objects absent), **untracked scripts** (applied by hand, never journaled), **orphaned entries**, and failed Flyway migrations. Zero risk, read-only — drop it into CI next to the tools you already run. |
+| **Hybrid mode** | Evidence can't see data-only scripts — a history table can. Opt in with `--track-history` (or `"TrackHistory": true`) and every version-script run is recorded in `dbo.schemascope_history` (version, script, duration, success). `--journal auto` then cross-checks SchemaScope's own history like any other journal: DDL claims are verified against the schema, and a data script with no record is flagged as "may never have run". Journal convenience + evidence-based truth. |
 
 **Small quality-of-life touches**: a grouped, searchable menu (arrow keys or type to filter); typing `back`, `menu`, or `cancel` at any prompt returns to the main menu; pre-flight input validation; retry-with-edits loops on operation failures; completion panels with `OSC 52` clipboard auto-copy and `OSC 8` folder hyperlinks; per-user Debug config for F5-without-typing.
 
@@ -124,7 +125,8 @@ schemascope --clone   --source MyDb --target MyDb_Copy
 | `-o`, `--output <fmt>` | Output for `--verify` / `--detect` / `--audit`: `text` (default) or `json`. JSON goes to stdout, diagnostics to stderr — pipe-safe. |
 | `--report <path>` | Also write the JSON report to a file (works in text mode too). |
 | `--strict` | With `--audit`: exit `1` when drift exists, even at head. Also fails on untracked/orphaned journal findings. |
-| `--journal <p>` | With `--audit`: cross-check a migration journal — `dbup`, `flyway`, or `auto` (detects whichever table exists). Journal lies always exit `1`. |
+| `--journal <p>` | With `--audit`: cross-check a migration journal — `dbup`, `flyway`, `schemascope`, or `auto` (detects whichever table exists). Journal lies always exit `1`. |
+| `--track-history` | Record each version-script run in `dbo.schemascope_history` (also `"TrackHistory": true` in config). Makes data-only scripts auditable. |
 | `--backup` | Back up a database. Requires `--source` and `--backup-path`. |
 | `--restore` | Restore a backup. Requires `--target` and `--backup-path`; optional `--data-dir` / `--log-dir`. |
 | `--clone` | Clone a database. Requires `--source` and `--target`; optional `--backup-path`. |
@@ -382,7 +384,7 @@ SchemaScope/
 - [x] `--output json` / `--report` machine-readable output for verify, detect, and audit
 - [x] Journal cross-check: audit databases managed by DbUp / Flyway (`--journal auto`)
 - [x] GitHub Action (composite, with job summary + outputs) and GHCR container image
-- [ ] Opt-in history table (tracks data-only scripts; verification stays evidence-based)
+- [x] Hybrid mode: opt-in `schemascope_history` table (tracks data-only scripts; verification stays evidence-based)
 
 ---
 

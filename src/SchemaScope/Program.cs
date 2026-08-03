@@ -241,7 +241,8 @@ ToolkitActions BuildActions() => new(
     new SqlConnectionFactory(config.Server, config.Connection),
     new VersionScriptLocator(config.VersionFolder, config.VersionScheme),
     config.PrepatchFile,
-    config.DefaultSchema);
+    config.DefaultSchema,
+    config.TrackHistory || options.TrackHistory);
 
 if (options.IsInteractive)
 {
@@ -359,7 +360,8 @@ static void PrintHelp()
     AnsiConsole.MarkupLine("  -o, --output <fmt>     Output format for verify/detect/audit: text (default) or json.");
     AnsiConsole.MarkupLine("      --report <path>    Also write the JSON report to a file.");
     AnsiConsole.MarkupLine("      --strict           Audit only: exit 1 when drift exists, even at head.");
-    AnsiConsole.MarkupLine("      --journal <p>      Audit only: cross-check a migration journal (dbup, flyway, or auto).");
+    AnsiConsole.MarkupLine("      --journal <p>      Audit only: cross-check a migration journal (dbup, flyway, schemascope, or auto).");
+    AnsiConsole.MarkupLine("      --track-history    Record every version-script run in dbo.schemascope_history (also via config TrackHistory).");
     AnsiConsole.MarkupLine("      --backup           Back up a database. Needs --source and --backup-path.");
     AnsiConsole.MarkupLine("      --restore          Restore a backup. Needs --target and --backup-path.");
     AnsiConsole.MarkupLine("      --clone            Clone a database. Needs --source and --target.");

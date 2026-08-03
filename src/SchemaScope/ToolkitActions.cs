@@ -16,17 +16,20 @@ public sealed class ToolkitActions
     private readonly VersionScriptLocator _locator;
     private readonly string _prepatchFile;
     private readonly string _defaultSchema;
+    private readonly bool _trackHistory;
 
     public ToolkitActions(
         SqlConnectionFactory factory,
         VersionScriptLocator locator,
         string prepatchFile,
-        string defaultSchema = "dbo")
+        string defaultSchema = "dbo",
+        bool trackHistory = false)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         _locator = locator ?? throw new ArgumentNullException(nameof(locator));
         _prepatchFile = prepatchFile ?? string.Empty;
         _defaultSchema = string.IsNullOrWhiteSpace(defaultSchema) ? "dbo" : defaultSchema;
+        _trackHistory = trackHistory;
     }
 
     public string Server => _factory.Server;
@@ -315,14 +318,14 @@ public sealed class ToolkitActions
         }
 
         var ok = false;
-        RunWithSession(database, (_, logger, runner) =>
+        RunWithSession(database, (session, logger, runner) =>
         {
             if (!runner.Execute("Prepatch (missing tables / seed data)", _prepatchFile))
             {
                 logger.Error("Aborting. Fix prepatch failure before running version scripts.");
                 return;
             }
-            RunVersionRangeInner(logger, runner, from, to);
+            RunVersionRangeInner(session, logger, runner, from, to);
             ok = true;
         });
         return ok;
@@ -330,10 +333,10 @@ public sealed class ToolkitActions
 
     public void RunVersionRange(string database, int from, int to)
     {
-        RunWithSession(database, (_, logger, runner) => RunVersionRangeInner(logger, runner, from, to));
+        RunWithSession(database, (session, logger, runner) => RunVersionRangeInner(session, logger, runner, from, to));
     }
 
-    private void RunVersionRangeInner(RunLogger logger, SqlScriptRunner runner, int from, int to)
+    private void RunVersionRangeInner(SqlSession session, RunLogger logger, SqlScriptRunner runner, int from, int to)
     {
         if (from > 0 && to > 0 && from > to)
         {
@@ -353,7 +356,7 @@ public sealed class ToolkitActions
 
         foreach (var s in scripts)
         {
-            var ok = runner.Execute(s.Label, s.File.FullName);
+            var ok = ExecuteVersionScript(session, logger, runner, s);
             if (ok)
             {
                 okCount++;
@@ -366,6 +369,19 @@ public sealed class ToolkitActions
 
         logger.Blank();
         logger.Info($"Summary: {okCount} OK, {failCount} FAIL");
+    }
+
+    private bool ExecuteVersionScript(SqlSession session, RunLogger logger, SqlScriptRunner runner, VersionScript script)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var ok = runner.Execute(script.Label, script.File.FullName);
+        stopwatch.Stop();
+
+        if (_trackHistory)
+        {
+            HistoryTracker.Record(session, logger, script.Number, script.File.Name, ok, stopwatch.ElapsedMilliseconds);
+        }
+        return ok;
     }
 
     public void RunSpecificVersion(string database, int number)
@@ -383,7 +399,7 @@ public sealed class ToolkitActions
             return;
         }
 
-        RunWithSession(database, (_, _, runner) => runner.Execute(script.Label, script.File.FullName));
+        RunWithSession(database, (session, logger, runner) => ExecuteVersionScript(session, logger, runner, script));
     }
 
     public void DetectCurrentVersion(string database, int startFrom = 0)
