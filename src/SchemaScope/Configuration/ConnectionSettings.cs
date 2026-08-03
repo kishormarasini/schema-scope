@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.Data.SqlClient;
 
 namespace SchemaScope.Configuration;
@@ -15,6 +16,16 @@ public sealed class ConnectionSettings
     public AuthenticationMode Authentication { get; set; } = AuthenticationMode.Windows;
     public string UserId { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public bool PersistPassword { get; set; } = true;
+
+    [JsonIgnore]
+    public bool HasEffectivePassword => !string.IsNullOrEmpty(EffectivePassword);
+
+    [JsonIgnore]
+    public bool PasswordFromEnvironment =>
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(PasswordEnvVar));
     public bool Encrypt { get; set; }
     public bool TrustServerCertificate { get; set; } = true;
     public int ConnectTimeoutSeconds { get; set; } = 15;
@@ -46,6 +57,7 @@ public sealed class ConnectionSettings
         return builder;
     }
 
-    private string EffectivePassword =>
+    [JsonIgnore]
+    public string EffectivePassword =>
         Environment.GetEnvironmentVariable(PasswordEnvVar) is { Length: > 0 } fromEnv ? fromEnv : Password;
 }

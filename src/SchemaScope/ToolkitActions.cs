@@ -237,8 +237,14 @@ public sealed class ToolkitActions
         body.AppendLine(pathMarkup);
 
         var hints = new List<string>();
-        if (copied) hints.Add("path copied to clipboard");
-        if (folderLink is not null) hints.Add("Ctrl+Click path to open folder");
+        if (copied)
+        {
+            hints.Add("path copied to clipboard");
+        }
+        if (folderLink is not null)
+        {
+            hints.Add("Ctrl+Click path to open folder");
+        }
         if (hints.Count > 0)
         {
             body.AppendLine($"[{Theme.Muted}]{string.Join(" · ", hints)}[/]");

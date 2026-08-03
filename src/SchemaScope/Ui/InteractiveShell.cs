@@ -1,4 +1,6 @@
 using System.IO;
+using SchemaScope.Configuration;
+using SchemaScope.Sql;
 using SchemaScope.TestDb;
 using Spectre.Console;
 
@@ -6,13 +8,18 @@ namespace SchemaScope.Ui;
 
 internal sealed class InteractiveShell
 {
-    private readonly ToolkitActions _actions;
-    private readonly string? _defaultDatabase;
+    private readonly SchemaScopeConfig _config;
+    private readonly Func<ToolkitActions> _buildActions;
+    private ToolkitActions _actions;
 
-    public InteractiveShell(ToolkitActions actions, string? defaultDatabase = null)
+    private string? DefaultDatabase =>
+        string.IsNullOrWhiteSpace(_config.Database) ? null : _config.Database;
+
+    public InteractiveShell(SchemaScopeConfig config, Func<ToolkitActions> buildActions)
     {
-        _actions = actions ?? throw new ArgumentNullException(nameof(actions));
-        _defaultDatabase = string.IsNullOrWhiteSpace(defaultDatabase) ? null : defaultDatabase;
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _buildActions = buildActions ?? throw new ArgumentNullException(nameof(buildActions));
+        _actions = buildActions();
     }
 
     public void Run()
@@ -94,6 +101,10 @@ internal sealed class InteractiveShell
                         RunTestDbScriptsFlow();
                         break;
 
+                    case MenuAction.Settings:
+                        RunSettingsFlow();
+                        break;
+
                     case MenuAction.Exit:
                         AnsiConsole.MarkupLine($"[{Theme.Muted}]bye[/]");
                         return;
@@ -109,7 +120,49 @@ internal sealed class InteractiveShell
     }
 
     private string AskTargetDatabase() =>
-        Prompts.AskValidated("Target database", _defaultDatabase, ValidateDbIdentifier);
+        Prompts.AskValidated("Target database", DefaultDatabase, ValidateDbIdentifier);
+
+    private void RunSettingsFlow()
+    {
+        if (!SetupWizard.Run(_config, firstRun: false))
+        {
+            return;
+        }
+
+        if (_config.Connection.Authentication == AuthenticationMode.SqlPassword
+            && !_config.Connection.HasEffectivePassword)
+        {
+            _config.Connection.Password = Prompts.AskSecret("Password");
+            _config.Connection.PersistPassword = false;
+        }
+
+        var connected = false;
+        string? error = null;
+
+        AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .SpinnerStyle(Theme.HighlightStyle)
+            .Start($"Reconnecting to [bold]{Theme.Escape(_config.Server)}[/] …", _ =>
+            {
+                var factory = new SqlConnectionFactory(_config.Server, _config.Connection);
+                connected = SqlSession.TryTestConnection(factory, "master", out error);
+            });
+
+        if (connected)
+        {
+            _actions = _buildActions();
+            AnsiConsole.MarkupLine($"  [{Theme.Success}]✓[/] Reconnected with the new settings.");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"  [{Theme.Danger}]✗ Could not connect with the new settings:[/]");
+            AnsiConsole.MarkupLine($"  [{Theme.Muted}]{Theme.Escape(error ?? "(no details)")}[/]");
+            AnsiConsole.MarkupLine($"  [{Theme.Muted}]Settings were saved. The previous connection stays active for this session.[/]");
+        }
+
+        var scriptCount = new VersionScriptLocator(_config.VersionFolder, _config.VersionScheme).GetInRange(0, 0).Count;
+        Banner.StartupInfo(_config, scriptCount, _config.Path);
+    }
 
     private void RunBackupFlow()
     {

@@ -21,7 +21,11 @@ public sealed class DatabaseOperations
 
     public bool Backup(string sourceDb, string backupPath, Action<int>? onProgress = null, Action<string>? onSummary = null)
     {
-        if (!ValidateIdentifier(sourceDb, "Source database")) return false;
+        if (!ValidateIdentifier(sourceDb, "Source database"))
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(backupPath))
         {
             _logger.Error("Backup path is required.");
@@ -70,7 +74,11 @@ public sealed class DatabaseOperations
     public bool Restore(string targetDb, string backupPath, string? dataDir = null, string? logDir = null,
         Action<int>? onProgress = null, Action<string>? onSummary = null)
     {
-        if (!ValidateIdentifier(targetDb, "Target database")) return false;
+        if (!ValidateIdentifier(targetDb, "Target database"))
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(backupPath) || !File.Exists(backupPath))
         {
             _logger.Error($"Backup file not found: {backupPath}");
@@ -154,8 +162,16 @@ public sealed class DatabaseOperations
     public bool Clone(string sourceDb, string targetDb, string? backupPath = null, string? dataDir = null, string? logDir = null,
         Action<int>? onBackupProgress = null, Action<int>? onRestoreProgress = null, Action<string>? onSummary = null)
     {
-        if (!ValidateIdentifier(sourceDb, "Source database")) return false;
-        if (!ValidateIdentifier(targetDb, "Target database")) return false;
+        if (!ValidateIdentifier(sourceDb, "Source database"))
+        {
+            return false;
+        }
+
+        if (!ValidateIdentifier(targetDb, "Target database"))
+        {
+            return false;
+        }
+
         if (sourceDb.Equals(targetDb, StringComparison.OrdinalIgnoreCase))
         {
             _logger.Error("Source and target database names must differ.");

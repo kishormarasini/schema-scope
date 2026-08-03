@@ -1,7 +1,7 @@
 using System.IO;
+using Microsoft.Data.SqlClient;
 using SchemaScope.Parsing;
 using SchemaScope.Sql;
-using Microsoft.Data.SqlClient;
 
 namespace SchemaScope.Verification;
 

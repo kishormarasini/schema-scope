@@ -9,9 +9,9 @@ internal static class AppInfo
     public const string Author  = "Kishor Marasini";
 
     public static string Version { get; } =
-        typeof(AppInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(AppInfo).Assembly.GetName().Version?.ToString(3)
-        ?? "0.0.0";
+        (typeof(AppInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+         ?? typeof(AppInfo).Assembly.GetName().Version?.ToString(3)
+         ?? "0.0.0").Split('+')[0];
 
     public const string License = "MIT";
 }

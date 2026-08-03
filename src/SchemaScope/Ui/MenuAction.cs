@@ -12,5 +12,6 @@ public enum MenuAction
     Restore,
     Clone,
     TestDbScripts,
+    Settings,
     Exit
 }

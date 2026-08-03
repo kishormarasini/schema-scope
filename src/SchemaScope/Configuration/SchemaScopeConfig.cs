@@ -33,13 +33,20 @@ public sealed class SchemaScopeConfig
 
         config ??= new SchemaScopeConfig();
         config.Path = writePath;
+        config.Connection.PersistPassword = !string.IsNullOrEmpty(config.Connection.Password);
         return config;
     }
 
     public void Save()
     {
+        var password = Connection.Password;
         try
         {
+            if (!Connection.PersistPassword)
+            {
+                Connection.Password = string.Empty;
+            }
+
             var target = Path ?? DefaultPath;
             var dir = System.IO.Path.GetDirectoryName(target);
             if (!string.IsNullOrWhiteSpace(dir))
@@ -51,6 +58,10 @@ public sealed class SchemaScopeConfig
         catch (Exception ex)
         {
             ErrorLog.Write($"Failed to save config '{Path ?? DefaultPath}'", ex);
+        }
+        finally
+        {
+            Connection.Password = password;
         }
     }
 

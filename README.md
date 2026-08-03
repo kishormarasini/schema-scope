@@ -25,8 +25,11 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 | **Backup** | `BACKUP DATABASE` to a `.bak` inside the app folder with live progress. |
 | **Restore** | Restores a `.bak` into a target DB. Auto-discovers logical file names (`RESTORE FILELISTONLY`), auto-uses server default data/log paths, forces `SINGLE_USER WITH ROLLBACK IMMEDIATE` if the target already exists, then `MULTI_USER` after. |
 | **Clone** | Backup source → Restore as target, in one step. |
+| **Setup wizard** | First run opens a guided setup: server, authentication (with a live connection test), database picker straight from `sys.databases`, script-folder validation with a live count of matching files, and naming-scheme presets. Rerun it any time from the **Settings** menu or with `--setup`. |
 
-**Small quality-of-life touches**: instant-keypress menu (press `1`-`9` or `0`, no Enter needed); typing `back`, `menu`, or `cancel` at any prompt returns to the main menu; pre-flight input validation; retry-with-edits loops on operation failures; completion panels with `OSC 52` clipboard auto-copy and `OSC 8` folder hyperlinks; per-user Debug config for F5-without-typing.
+**Small quality-of-life touches**: a grouped, searchable menu (arrow keys or type to filter); typing `back`, `menu`, or `cancel` at any prompt returns to the main menu; pre-flight input validation; retry-with-edits loops on operation failures; completion panels with `OSC 52` clipboard auto-copy and `OSC 8` folder hyperlinks; per-user Debug config for F5-without-typing.
+
+**Security**: SQL-auth passwords never have to touch disk. The wizard offers three options — the `SCHEMASCOPE_PASSWORD` environment variable (recommended), a masked once-per-session prompt, or (opt-in, with a warning) storing it in the per-user config file. Session-entered passwords are guaranteed never to be written back on save.
 
 ---
 
@@ -34,7 +37,7 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 
 - **.NET 10 SDK** (for building or running; pinned via [`global.json`](global.json))
 - SQL Server reachable via Windows Authentication (on Windows) or SQL authentication (any OS)
-- Runs on Windows, Linux, or macOS. Visual Studio 2022 17.12+, Rider, or the `dotnet` CLI
+- Runs on Windows, Linux, or macOS. Visual Studio 2026 (18.0+), Rider, or the `dotnet` CLI
 
 Built with `<Nullable>enable</Nullable>` and `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`; the compiler enforces null annotations across every public and internal API. All DB reads, path helpers, file I/O, JSON deserialisation, and reflection-based assembly metadata are null-guarded.
 
@@ -48,8 +51,12 @@ Built with `<Nullable>enable</Nullable>` and `<TreatWarningsAsErrors>true</Treat
 
 ### Run from the command line
 ```bash
-# Interactive (first run asks for server, DB, scripts folder and saves config)
+# Interactive. First run opens a guided setup wizard (server, auth, database,
+# scripts folder) with a live connection test; everything is saved for next time.
 dotnet run --project src/SchemaScope
+
+# Rerun the wizard any time (also available as "Settings" in the menu).
+dotnet run --project src/SchemaScope -- --setup
 
 # Release publish: single-file, self-contained, no .NET install needed on the target.
 # Choose the runtime for the target OS: win-x64, linux-x64, osx-x64, or osx-arm64.
@@ -75,6 +82,7 @@ schemascope --database MyDb --server MACHINE\INSTANCE --version-folder D:\migrat
 | `--end-at` | Highest version to run. `0` = no bound. |
 | `--skip-prepatch` | Skip prepatch; run versions only. |
 | `--prepatch-only` | Run prepatch only. |
+| `--setup` | Run the interactive setup wizard. |
 | `-h`, `--help` | Show help. |
 | `-v`, `--version` | Print app name, version, author, and license, then exit. |
 
@@ -119,6 +127,8 @@ By default, files are named `1.0.0.N.sql` where `N` is a positive integer (`1.0.
 ## Configuration
 
 All settings live in a single JSON config file: server, database, script folder, prepatch path, the version-file naming scheme, the default schema, and connection/auth options. Nothing is hard-coded. CLI flags override individual values at runtime.
+
+You rarely need to edit the file by hand: the first interactive run opens a guided setup wizard, and the **Settings** menu (or `--setup`) reruns it with your current values pre-filled — including a live connection test and a database picker.
 
 The file is resolved in this order:
 1. `--config <path>` if supplied.
@@ -292,6 +302,9 @@ SchemaScope/
 - [x] Cross-platform (Linux / macOS): drop Windows-only assumptions
 - [x] CI: build + test on Linux, Windows, and macOS via GitHub Actions
 - [x] `SCHEMASCOPE_PASSWORD` environment variable (keeps SQL auth passwords out of the config file)
+- [x] First-run setup wizard with live connection test and database picker
+- [x] In-app Settings (rerun the wizard, reconnect without restarting)
+- [x] Session-only masked password entry (never written to disk)
 
 ---
 

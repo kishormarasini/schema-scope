@@ -25,6 +25,7 @@ public sealed class CliOptions
     public bool PrepatchOnly { get; set; }
     public bool ShowHelp { get; set; }
     public bool ShowVersion { get; set; }
+    public bool RunSetup { get; set; }
 
     public string? SourceDatabase { get; set; }
     public string? TargetDatabase { get; set; }
@@ -108,6 +109,10 @@ public sealed class CliOptions
                     break;
                 case "--log-dir":
                     options.LogDir = ReadValue(args, ref i, arg);
+                    break;
+
+                case "--setup":
+                    options.RunSetup = true;
                     break;
 
                 case "--help":

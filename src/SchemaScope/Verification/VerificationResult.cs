@@ -32,9 +32,21 @@ public sealed class VerificationReport
     {
         get
         {
-            if (Results.Count == 0)           return VerificationVerdict.NoObjects;
-            if (DiffersCount == 0 && MissingCount == 0) return VerificationVerdict.FullyApplied;
-            if (OkCount == 0 && DiffersCount == 0)      return VerificationVerdict.NotApplied;
+            if (Results.Count == 0)
+            {
+                return VerificationVerdict.NoObjects;
+            }
+
+            if (DiffersCount == 0 && MissingCount == 0)
+            {
+                return VerificationVerdict.FullyApplied;
+            }
+
+            if (OkCount == 0 && DiffersCount == 0)
+            {
+                return VerificationVerdict.NotApplied;
+            }
+
             return VerificationVerdict.Partial;
         }
     }

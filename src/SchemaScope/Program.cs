@@ -53,12 +53,6 @@ if (options.ShowHelp)
 
 var config = SchemaScopeConfig.Load(options.ConfigPath);
 
-if (!OperatingSystem.IsWindows() && config.Connection.Authentication == AuthenticationMode.Windows)
-{
-    AnsiConsole.MarkupLine(
-        $"[{Theme.Warning}]Windows Authentication is selected but the OS is not Windows. On Linux/macOS set \"Authentication\": \"SqlPassword\" (with UserId/Password) in the config file.[/]");
-}
-
 var server        = FirstNonEmpty(options.Server, config.Server);
 var databaseName  = FirstNonEmpty(options.DatabaseName, config.Database);
 var versionFolder = FirstNonEmpty(options.VersionFolder, config.VersionFolder);
@@ -68,21 +62,54 @@ if (options.IsInteractive)
 {
     Banner.Title();
 
-    if (string.IsNullOrWhiteSpace(server))
+    config.Server = server;
+    config.Database = databaseName;
+    config.VersionFolder = versionFolder;
+    config.PrepatchFile = prepatchFile;
+
+    var incomplete = string.IsNullOrWhiteSpace(config.Server)
+        || string.IsNullOrWhiteSpace(config.VersionFolder)
+        || !Directory.Exists(config.VersionFolder);
+
+    if (options.RunSetup || incomplete)
     {
-        server = Prompts.AskRequired(@"SQL Server (e.g. MACHINE\INSTANCE or .)");
+        if (!SetupWizard.Run(config, firstRun: incomplete))
+        {
+            AnsiConsole.MarkupLine($"[{Theme.Muted}]Setup is required before first use. Bye.[/]");
+            return 2;
+        }
     }
 
-    while (string.IsNullOrWhiteSpace(versionFolder) || !Directory.Exists(versionFolder))
+    if (config.Connection.Authentication == AuthenticationMode.SqlPassword
+        && !config.Connection.HasEffectivePassword)
     {
-        var defaultFolder = Directory.Exists(versionFolder) ? versionFolder : null;
         AnsiConsole.MarkupLine(
-            $"[{Theme.Muted}]folder containing your versioned .sql files (matching {Markup.Escape(config.VersionScheme.FileNameFormat)})[/]");
-        versionFolder = Prompts.AskExistingFolder("Scripts folder", defaultFolder);
+            $"  [{Theme.Muted}]SQL login for[/] [white]{Markup.Escape(config.Connection.UserId)}[/] [{Theme.Muted}]· password is never stored unless you opt in via Settings[/]");
+        config.Connection.Password = Prompts.AskSecret("Password");
+        config.Connection.PersistPassword = false;
     }
+
+    server        = config.Server;
+    databaseName  = config.Database;
+    versionFolder = config.VersionFolder;
+    prepatchFile  = config.PrepatchFile;
 }
 else
 {
+    if (!OperatingSystem.IsWindows() && config.Connection.Authentication == AuthenticationMode.Windows)
+    {
+        AnsiConsole.MarkupLine(
+            $"[{Theme.Warning}]Windows Authentication is selected but the OS is not Windows. Set \"Authentication\": \"SqlPassword\" in the config file and provide the password via {ConnectionSettings.PasswordEnvVar}.[/]");
+    }
+
+    if (config.Connection.Authentication == AuthenticationMode.SqlPassword
+        && !config.Connection.HasEffectivePassword)
+    {
+        AnsiConsole.MarkupLine(
+            $"[{Theme.Danger}]SQL login is configured but no password is available. Set the {ConnectionSettings.PasswordEnvVar} environment variable (or store a password in the config file).[/]");
+        return 2;
+    }
+
     if (string.IsNullOrWhiteSpace(server))
     {
         AnsiConsole.MarkupLine($"[{Theme.Danger}]Server is required (pass --server or set it in the config file).[/]");
@@ -156,10 +183,30 @@ if (needsScriptsFolder && !locator.FolderExists)
 
 var factory = new SqlConnectionFactory(server, config.Connection);
 
-if (!SqlSession.TryTestConnection(factory, "master", out var connectError))
+string? connectError = null;
+var connectOk = false;
+
+if (options.IsInteractive)
+{
+    AnsiConsole.Status()
+        .Spinner(Spinner.Known.Dots)
+        .SpinnerStyle(Theme.HighlightStyle)
+        .Start($"Connecting to [bold]{Markup.Escape(server)}[/] …",
+            _ => connectOk = SqlSession.TryTestConnection(factory, "master", out connectError));
+}
+else
+{
+    connectOk = SqlSession.TryTestConnection(factory, "master", out connectError);
+}
+
+if (!connectOk)
 {
     AnsiConsole.MarkupLine($"[{Theme.Danger}]Cannot connect to {Markup.Escape(server)}:[/]");
     AnsiConsole.MarkupLine($"[{Theme.Muted}]{Markup.Escape(connectError ?? "(no details)")}[/]");
+    if (options.IsInteractive)
+    {
+        AnsiConsole.MarkupLine($"[{Theme.Muted}]Run [white]schemascope --setup[/] or open Settings to fix the connection.[/]");
+    }
     return 3;
 }
 
@@ -175,16 +222,28 @@ if (!string.IsNullOrWhiteSpace(databaseName))
 }
 config.Save();
 
-var actions = new ToolkitActions(factory, locator, prepatchFile, config.DefaultSchema);
-
-Banner.StartupInfo(server, versionFolder, config.Path);
+ToolkitActions BuildActions() => new(
+    new SqlConnectionFactory(config.Server, config.Connection),
+    new VersionScriptLocator(config.VersionFolder, config.VersionScheme),
+    config.PrepatchFile,
+    config.DefaultSchema);
 
 if (options.IsInteractive)
 {
-    var shell = new InteractiveShell(actions, config.Database);
+    var scriptCount = new VersionScriptLocator(config.VersionFolder, config.VersionScheme).GetInRange(0, 0).Count;
+    Banner.StartupInfo(config, scriptCount, config.Path);
+
+    var shell = new InteractiveShell(config, BuildActions);
     shell.Run();
     return 0;
 }
+
+var actions = BuildActions();
+
+AnsiConsole.MarkupLine(
+    $"[{Theme.Muted}]server[/] [{Theme.Info}]{Markup.Escape(server)}[/]" +
+    (string.IsNullOrWhiteSpace(databaseName) ? string.Empty : $"  [{Theme.Muted}]db[/] [{Theme.Info}]{Markup.Escape(databaseName)}[/]") +
+    (string.IsNullOrWhiteSpace(versionFolder) ? string.Empty : $"  [{Theme.Muted}]scripts[/] {Markup.Escape(versionFolder)}"));
 
 switch (options.Command)
 {
@@ -275,6 +334,7 @@ static void PrintHelp()
     AnsiConsole.MarkupLine("      --backup-path <p>  Path to the .bak file (backup / restore / clone).");
     AnsiConsole.MarkupLine("      --data-dir <p>     Override the restore data-file directory.");
     AnsiConsole.MarkupLine("      --log-dir <p>      Override the restore log-file directory.");
+    AnsiConsole.MarkupLine("      --setup            Run the interactive setup wizard.");
     AnsiConsole.MarkupLine("  -h, --help             Show this help.");
     AnsiConsole.MarkupLine("  -v, --version          Print version and exit.");
 }

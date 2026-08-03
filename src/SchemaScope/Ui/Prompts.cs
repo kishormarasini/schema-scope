@@ -51,12 +51,58 @@ internal static class Prompts
 
     private static void RenderPrompt(string message, string? defaultValue)
     {
-        AnsiConsole.Markup($"[{Theme.Prompt}]{Theme.Escape(message)}[/]");
+        AnsiConsole.Markup($"  [{Theme.Accent}]❯[/] [{Theme.Prompt}]{Theme.Escape(message)}[/]");
         if (!string.IsNullOrWhiteSpace(defaultValue))
         {
-            AnsiConsole.Markup($" [{Theme.Subtitle}]({Theme.Escape(defaultValue)})[/]");
+            AnsiConsole.Markup($" [{Theme.Subtle}]‹{Theme.Escape(defaultValue)}›[/]");
         }
-        AnsiConsole.Markup(": ");
+        AnsiConsole.Markup($" [{Theme.Muted}]·[/] ");
+    }
+
+    public static string AskSecret(string message)
+    {
+        while (true)
+        {
+            AnsiConsole.Markup($"  [{Theme.Accent}]❯[/] [{Theme.Prompt}]{Theme.Escape(message)}[/] [{Theme.Muted}]·[/] ");
+            var answer = ReadSecretLine();
+            if (IsCancel(answer))
+            {
+                throw new ReturnToMenuException();
+            }
+            if (!string.IsNullOrEmpty(answer))
+            {
+                return answer;
+            }
+            AnsiConsole.MarkupLine($"[{Theme.Warning}]Value cannot be empty.[/]");
+        }
+    }
+
+    private static string ReadSecretLine()
+    {
+        var buffer = new System.Text.StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return buffer.ToString();
+            }
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Length--;
+                    Console.Write("\b \b");
+                }
+                continue;
+            }
+            if (!char.IsControl(key.KeyChar))
+            {
+                buffer.Append(key.KeyChar);
+                Console.Write('•');
+            }
+        }
     }
 
     public static string AskValidated(
@@ -175,43 +221,64 @@ internal static class Prompts
         return AnsiConsole.Prompt(prompt);
     }
 
-    private static readonly (MenuAction Action, string Glyph, string Label, string Description)[] MenuItems =
+    private sealed record MenuEntry(MenuAction? Action, string Glyph, string Label, string Description);
+
+    private static readonly (string Group, MenuEntry[] Entries)[] MenuGroups =
     {
-        (MenuAction.DetectVersion,   "▸", "Detect version",   "Probe the database to find its current applied version"),
-        (MenuAction.VerifyVersion,   "✓", "Verify",           "Check whether a specific version matches the database"),
-        (MenuAction.FullHeal,        "✦", "Full heal",        "Run the prepatch, then every version script in range"),
-        (MenuAction.VersionsOnly,    "↻", "Versions",         "Run version scripts in range without the prepatch"),
-        (MenuAction.SpecificVersion, "▹", "Specific version", "Run one version by number"),
-        (MenuAction.PrepatchOnly,    "✱", "Prepatch",         "Run the prepatch SQL only"),
-        (MenuAction.Backup,          "↓", "Backup",           "Back up a database to a .bak file"),
-        (MenuAction.Restore,         "↑", "Restore",          "Restore a .bak file into a target database"),
-        (MenuAction.Clone,           "⎘", "Clone",            "Copy a database to a new name via backup plus restore"),
-        (MenuAction.TestDbScripts,   "⎈", "Test DB scripts",  "Manage test DBs and run scripts on them"),
-        (MenuAction.Exit,            "✕", "Exit",             "Quit SchemaScope"),
+        ("Inspect", new[]
+        {
+            new MenuEntry(MenuAction.DetectVersion,   "◉", "Detect version",   "Probe the database to find its current applied version"),
+            new MenuEntry(MenuAction.VerifyVersion,   "✓", "Verify",           "Check whether a specific version matches the database"),
+        }),
+        ("Migrate", new[]
+        {
+            new MenuEntry(MenuAction.FullHeal,        "✦", "Full heal",        "Run the prepatch, then every version script in range"),
+            new MenuEntry(MenuAction.VersionsOnly,    "↻", "Versions",         "Run version scripts in range without the prepatch"),
+            new MenuEntry(MenuAction.SpecificVersion, "▹", "Specific version", "Run one version by number"),
+            new MenuEntry(MenuAction.PrepatchOnly,    "✱", "Prepatch",         "Run the prepatch SQL only"),
+        }),
+        ("Database", new[]
+        {
+            new MenuEntry(MenuAction.Backup,          "↓", "Backup",           "Back up a database to a .bak file"),
+            new MenuEntry(MenuAction.Restore,         "↑", "Restore",          "Restore a .bak file into a target database"),
+            new MenuEntry(MenuAction.Clone,           "⧉", "Clone",            "Copy a database to a new name via backup plus restore"),
+        }),
+        ("Workspace", new[]
+        {
+            new MenuEntry(MenuAction.TestDbScripts,   "⚑", "Test DB scripts",  "Manage test DBs and run scripts on them"),
+            new MenuEntry(MenuAction.Settings,        "⚙", "Settings",         "View and edit the connection and script configuration"),
+            new MenuEntry(MenuAction.Exit,            "✕", "Exit",             "Quit SchemaScope"),
+        }),
     };
 
     public static MenuAction AskMenuChoice()
     {
         AnsiConsole.WriteLine();
 
-        var prompt = new SelectionPrompt<MenuAction>
+        var prompt = new SelectionPrompt<MenuEntry>
         {
             HighlightStyle = Theme.HighlightStyle,
-            PageSize = MenuItems.Length + 2,
-            WrapAround = true
+            PageSize = MenuGroups.Sum(g => g.Entries.Length) + MenuGroups.Length + 2,
+            WrapAround = true,
+            SearchEnabled = true
         }
-        .Title($"[bold {Theme.Title}]What would you like to do?[/]  [{Theme.Muted}](arrow keys to navigate, Enter to select)[/]")
-        .UseConverter(action =>
-        {
-            var item = MenuItems.First(m => m.Action == action);
-            return Theme.MenuRow(item.Glyph, item.Label, item.Description);
-        });
+        .Title($"[bold {Theme.Title}]What would you like to do?[/]  [{Theme.Muted}](↑↓ move · type to filter · Enter selects)[/]")
+        .UseConverter(entry => entry.Action is null
+            ? $"[{Theme.Subtle}]{Markup.Escape(entry.Label.ToUpperInvariant())}[/]"
+            : Theme.MenuRow(entry.Glyph, entry.Label, entry.Description));
 
-        foreach (var item in MenuItems)
+        foreach (var (group, entries) in MenuGroups)
         {
-            prompt.AddChoice(item.Action);
+            prompt.AddChoiceGroup(new MenuEntry(null, string.Empty, group, string.Empty), entries);
         }
 
-        return AnsiConsole.Prompt(prompt);
+        while (true)
+        {
+            var picked = AnsiConsole.Prompt(prompt);
+            if (picked.Action is { } action)
+            {
+                return action;
+            }
+        }
     }
 }
