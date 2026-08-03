@@ -49,7 +49,7 @@ public static class ModuleBodyComparer
             return (string.Empty, Array.Empty<string>());
         }
 
-        var parser = new TSql160Parser(initialQuotedIdentifiers: true);
+        var parser = new TSql170Parser(initialQuotedIdentifiers: true);
 
         TSqlFragment? fragment;
         IList<ParseError> parseErrors;
@@ -67,7 +67,7 @@ public static class ModuleBodyComparer
             return (string.Empty, errors);
         }
 
-        var generator = new Sql160ScriptGenerator(BuildOptions());
+        var generator = new Sql170ScriptGenerator(BuildOptions());
         generator.GenerateScript(fragment, out var canonical);
         canonical ??= string.Empty;
 
@@ -81,7 +81,7 @@ public static class ModuleBodyComparer
     {
         KeywordCasing = KeywordCasing.Uppercase,
         IncludeSemicolons = true,
-        SqlVersion = SqlVersion.Sql160,
+        SqlVersion = SqlVersion.Sql170,
         AlignClauseBodies = false,
         AlignColumnDefinitionFields = false,
         AlignSetClauseItem = false,

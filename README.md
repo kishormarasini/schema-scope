@@ -1,5 +1,7 @@
 # SchemaScope
 
+[![CI](https://github.com/kishormarasini/schema-scope/actions/workflows/ci.yml/badge.svg)](https://github.com/kishormarasini/schema-scope/actions/workflows/ci.yml)
+
 A modern CLI for running, verifying, and cloning versioned SQL Server databases.
 
 SchemaScope runs a folder of numbered `.sql` migration scripts in order and, uniquely, **tells you whether each script is actually applied** by parsing it with Microsoft's T-SQL parser (`ScriptDom`) and comparing object-by-object against the live database. It also handles backup, restore, clone, and detecting the version a database is currently at.
@@ -30,7 +32,7 @@ Built on **.NET 10**, styled with [Spectre.Console](https://spectreconsole.net/)
 
 ## Requirements
 
-- **.NET 10 SDK** (for building or running)
+- **.NET 10 SDK** (for building or running; pinned via [`global.json`](global.json))
 - SQL Server reachable via Windows Authentication (on Windows) or SQL authentication (any OS)
 - Runs on Windows, Linux, or macOS. Visual Studio 2022 17.12+, Rider, or the `dotnet` CLI
 
@@ -156,6 +158,7 @@ A documented template ships as [`config.sample.json`](config.sample.json):
 | `VersionScheme.FilePattern` | Regex with **one capturing group** that yields the integer version number. |
 | `VersionScheme.FileNameFormat` / `LabelFormat` | `String.Format` templates (`{0}` = version number) for building a file name and a display label. |
 | `Connection.Authentication` | `Windows` (integrated) or `SqlPassword` (uses `UserId` / `Password`). |
+| `Connection.Password` | Optional. Prefer the `SCHEMASCOPE_PASSWORD` environment variable, which takes precedence and keeps the password out of the config file. |
 | `Connection.Encrypt` / `TrustServerCertificate` / `ConnectTimeoutSeconds` / `CommandTimeoutSeconds` | Connection-string knobs applied to every connection. |
 
 ---
@@ -287,6 +290,8 @@ SchemaScope/
 - [x] CLI flags for `--backup` / `--restore` / `--clone`
 - [x] Read-only verify mode for CI pipelines
 - [x] Cross-platform (Linux / macOS): drop Windows-only assumptions
+- [x] CI: build + test on Linux, Windows, and macOS via GitHub Actions
+- [x] `SCHEMASCOPE_PASSWORD` environment variable (keeps SQL auth passwords out of the config file)
 
 ---
 
