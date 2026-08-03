@@ -19,7 +19,7 @@ public sealed class DdlExtractor
             return new DdlExtractionResult();
         }
 
-        var parser = new TSql160Parser(initialQuotedIdentifiers: true);
+        var parser = new TSql170Parser(initialQuotedIdentifiers: true);
 
         TSqlFragment fragment;
         IList<ParseError> parseErrors;

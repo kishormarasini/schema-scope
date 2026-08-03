@@ -10,6 +10,8 @@ public enum AuthenticationMode
 
 public sealed class ConnectionSettings
 {
+    public const string PasswordEnvVar = "SCHEMASCOPE_PASSWORD";
+
     public AuthenticationMode Authentication { get; set; } = AuthenticationMode.Windows;
     public string UserId { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
@@ -34,7 +36,7 @@ public sealed class ConnectionSettings
         {
             builder.IntegratedSecurity = false;
             builder.UserID = UserId;
-            builder.Password = Password;
+            builder.Password = EffectivePassword;
         }
         else
         {
@@ -43,4 +45,7 @@ public sealed class ConnectionSettings
 
         return builder;
     }
+
+    private string EffectivePassword =>
+        Environment.GetEnvironmentVariable(PasswordEnvVar) is { Length: > 0 } fromEnv ? fromEnv : Password;
 }
