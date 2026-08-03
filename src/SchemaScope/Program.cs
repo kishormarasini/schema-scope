@@ -259,9 +259,6 @@ ToolkitActions BuildActions() => new(
 
 if (options.IsInteractive)
 {
-    var scriptCount = new VersionScriptLocator(config.VersionFolder, config.VersionScheme).GetInRange(0, 0).Count;
-    Banner.StartupInfo(config, scriptCount, config.Path);
-
     var shell = new InteractiveShell(config, BuildActions);
     shell.Run();
     return 0;

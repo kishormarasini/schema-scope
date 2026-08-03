@@ -59,6 +59,13 @@ internal static class Prompts
         AnsiConsole.Markup($" [{Theme.Muted}]·[/] ");
     }
 
+    public static void PauseBeforeMenu()
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"  [{Theme.Subtle}]Press any key to return to the menu …[/]");
+        Console.ReadKey(intercept: true);
+    }
+
     public static string AskSecret(string message)
     {
         while (true)

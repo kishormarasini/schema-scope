@@ -1035,7 +1035,7 @@ public sealed class ToolkitActions
 
     private void RenderVerificationReport(RunLogger logger, VerificationReport report)
     {
-        Banner.Section($"{_locator.Label(report.Version)} verification");
+        Banner.SubSection($"{_locator.Label(report.Version)} verification");
 
         if (report.ParseWarnings.Count > 0)
         {
@@ -1222,7 +1222,7 @@ public sealed class ToolkitActions
         for (int i = 0; i < dbs.Count; i++)
         {
             var db = dbs[i];
-            Banner.Section($"[{i + 1}/{dbs.Count}] {db.Name} ({db.Owner})");
+            Banner.SubSection($"[{i + 1}/{dbs.Count}] {db.Name} ({db.Owner})");
 
             var perDbLogger = RunLogger.Create(db.Name);
             try
@@ -1278,7 +1278,7 @@ public sealed class ToolkitActions
     private static void RenderTestDbSummary(IReadOnlyList<TestDbRunResult> results)
     {
         AnsiConsole.WriteLine();
-        Banner.Section("Test DB run summary");
+        Banner.SubSection("Test DB run summary");
 
         var passed = results.Count(r => r.Success);
         var failed = results.Count - passed;

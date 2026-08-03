@@ -26,7 +26,9 @@ internal sealed class InteractiveShell
     {
         while (true)
         {
+            Banner.Home(_config, CountScripts(), _config.Path);
             var action = Prompts.AskMenuChoice();
+            var pause = true;
 
             try
             {
@@ -106,16 +108,31 @@ internal sealed class InteractiveShell
                         break;
 
                     case MenuAction.Exit:
-                        AnsiConsole.MarkupLine($"[{Theme.Muted}]bye[/]");
+                        Banner.Goodbye();
                         return;
                 }
             }
             catch (ReturnToMenuException)
             {
-                AnsiConsole.MarkupLine($"[{Theme.Muted}]returning to menu[/]");
+                pause = false;
             }
 
-            AnsiConsole.WriteLine();
+            if (pause)
+            {
+                Prompts.PauseBeforeMenu();
+            }
+        }
+    }
+
+    private int CountScripts()
+    {
+        try
+        {
+            return new VersionScriptLocator(_config.VersionFolder, _config.VersionScheme).GetInRange(0, 0).Count;
+        }
+        catch (ArgumentException)
+        {
+            return 0;
         }
     }
 
@@ -160,8 +177,6 @@ internal sealed class InteractiveShell
             AnsiConsole.MarkupLine($"  [{Theme.Muted}]Settings were saved. The previous connection stays active for this session.[/]");
         }
 
-        var scriptCount = new VersionScriptLocator(_config.VersionFolder, _config.VersionScheme).GetInRange(0, 0).Count;
-        Banner.StartupInfo(_config, scriptCount, _config.Path);
     }
 
     private void RunBackupFlow()
